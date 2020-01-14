@@ -1,6 +1,5 @@
 #pragma once
 
-
 namespace gk
 {
 struct Range
@@ -18,19 +17,51 @@ public:
 	virtual ~TPLoopBody() {};
 };
 
+namespace details
+{
+// do not use this type directly.
+class TPImplement;
+}
 
 class ThreadPool
 {
+	// 为啥用裸指针？引入 memory 头文件引入太多东西了
+	details::TPImplement* impl;
+
+	// 与 OpenCV 一样，简单起见，不支持超嵌套，同时只运行一项任务
+	// 指针是为了能改变值
+	int nestedbuf; int* nestedptr;
+
+	ThreadPool(ThreadPool const&) = delete;
+	ThreadPool& operator =(ThreadPool const&) = delete;
+
 public:
-	ThreadPool();
+	ThreadPool(ThreadPool&&) = default;
+	ThreadPool& operator =(ThreadPool&&) = default;
+
+	ThreadPool(int num_thread = -1);
 	~ThreadPool();
 
-	// 实现限制 ((stop - start) < INT_MAX / 2) && (start <= stop)
-	void run(TPLoopBody const& body, Range const& range, int nstripe = -1) const;
+	void set(int num_thread);
+
+	int get();
+
+	/* 实现限制 start <= stop
+	 * 如果有逆序需求，函数里面取符号
+	 * usepar 可以用来运行时切换实际使用多线程的嵌套等级
+	 */
+	void run(Range const& range, TPLoopBody const& body, bool usepar = true) const;
 };
 
 
-// 方便而已。转发到全局静态线程池调用
-void parallel_for(Range const& range, TPLoopBody const& body, int nstripe = -1);
+int get_thread_id();
+
+/* 方便而已。转发到全局静态线程池调用 */
+
+void set_num_thread(int n);
+
+int get_num_thread();
+
+void parallel_for(Range const& range, TPLoopBody const& body, bool usepar = true);
 }
 

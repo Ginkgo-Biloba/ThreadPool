@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+	<ImportGroup Label="PropertySheets" />
+	<PropertyGroup Label="UserMacros" />
+	<PropertyGroup>
+		<fddir>$(SolutionDir)3rd_lib\</fddir>
+		<IncludePath>$(fddir);$(IncludePath)</IncludePath>
+		<LibraryPath Condition="'$(PlatformTarget)'=='x64'">$(fddir)win_x64;$(LibraryPath)</LibraryPath>
+		<LibraryPath Condition="'$(PlatformTarget)'=='x86'">$(fddir)win_x86;$(LibraryPath)</LibraryPath>
+	</PropertyGroup>
+	<ItemDefinitionGroup>
+		<Link Condition="'$(Configuration)'!='Release'">
+			<AdditionalDependencies>pthreadVC2.lib;%(AdditionalDependencies)</AdditionalDependencies>
+		</Link>
+		<Link Condition="'$(Configuration)'=='Release'">
+			<AdditionalDependencies>pthreadVC2.lib;%(AdditionalDependencies)</AdditionalDependencies>
+		</Link>
+		</ItemDefinitionGroup>
+	<ItemGroup />
+</Project>
