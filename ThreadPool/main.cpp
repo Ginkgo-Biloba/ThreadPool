@@ -103,24 +103,27 @@ bool savePGM(Mat const& img, char const* name)
 
 int main()
 {
-	Mat m(2000, 2000);
-	ThreadPool pool(2);
-	Range range(0, m.rows);
-	Mandelbrot mb(m);
+	Mat m(2000, 2000), n(1500, 1500);
+	Mandelbrot mb(m), nb(n);
 	int method = 2;
 
 	clock_t t0 = clock();
 	if (method == 0)
-		mb(range);
-	else if (method == 1)
-		pool.run(range, mb);
+	{
+		mb(Range(0, m.rows));
+		nb(Range(0, n.rows));
+	}
 	else
-		parallel_for(range, mb);
+	{
+		parallel_for(Range(0, m.rows), mb);
+		parallel_for(Range(0, n.rows), nb);
+	}
 	clock_t t1 = clock();
 
-	//savePGM(m, "mandelbrot.pgm");
-	printf("Hello, World! %f ms\n",
-		1e3 * (t1 - t0) / CLOCKS_PER_SEC);
+	savePGM(m, "G:\\Sample\\mandelbrot0.pgm");
+	savePGM(n, "G:\\Sample\\mandelbrot1.pgm");
+	printf("Hello, World! %d, %f ms\n",
+		get_num_thread(), 1e3 * (t1 - t0) / CLOCKS_PER_SEC);
 	return 0;
 }
 
