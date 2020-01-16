@@ -1,0 +1,24 @@
+{
+	"configurations": [
+		{
+			"name": "Win32",
+			"defines": [
+				"_DEBUG",
+				"UNICODE",
+				"_UNICODE"
+			],
+			"windowsSdkVersion": "8.1",
+			"compilerPath": "${env:mingw}/bin/g++.exe",
+			"cStandard": "c11",
+			"cppStandard": "c++11",
+			"intelliSenseMode": "gcc-x64",
+			"includePath": [
+				"${env:mingw}/x86_64-w64-mingw32/include",
+				"${env:mingw}/lib/gcc/x86_64-w64-mingw32/5.1.0/include",
+				"${env:mingw}/lib/gcc/x86_64-w64-mingw32/5.1.0/include/c++",
+				"${workspaceFolder}"
+			]
+		}
+	],
+	"version": 4
+}

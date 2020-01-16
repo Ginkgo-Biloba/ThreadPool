@@ -1,0 +1,32 @@
+---
+Language:      Cpp
+BasedOnStyle:  WebKit
+
+IndentWidth : 2
+AccessModifierOffset : -2
+AlignAfterOpenBracket : DontAlign
+AlwaysBreakBeforeMultilineStrings : false
+ContinuationIndentWidth : 2
+ConstructorInitializerIndentWidth : 2
+IndentPPDirectives : AfterHash
+NamespaceIndentation : None
+
+TabWidth : 2
+UseTab : Always
+
+BreakBeforeBraces : Allman
+BreakBeforeTernaryOperators : true
+# AllowAllArgumentsOnNextLine : true
+# AllowAllConstructorInitializersOnNextLine : true
+AllowAllParametersOfDeclarationOnNextLine : true
+AllowShortBlocksOnASingleLine : true
+AllowShortCaseLabelsOnASingleLine : true
+AllowShortFunctionsOnASingleLine : true
+AllowShortIfStatementsOnASingleLine : true
+AllowShortLoopsOnASingleLine : true
+# AllowShortLambdasOnASingleLine : true
+
+MaxEmptyLinesToKeep : 2
+KeepEmptyLinesAtTheStartOfBlocks : false
+
+...

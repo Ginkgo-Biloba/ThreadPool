@@ -58,7 +58,7 @@ public:
 	void operator ()(Range const& range) const override
 	{
 		int hrow = m.rows / 2;
-		int hcol = m.cols / 2;
+		int hcol = m.cols * 2 / 3;
 		for (int h = range.start; h < range.end; ++h)
 		{
 			double Y = (h - hrow) * ppi;
@@ -100,23 +100,29 @@ bool savePGM(Mat const& img, char const* name)
 }
 
 
-
 int main()
 {
-	Mat m(2000, 2000), n(1500, 1500);
-	Mandelbrot mb(m), nb(n);
+	Mat m(3, 400), n(2000, 2000);
+	Mandelbrot m_par(m), n_par(n);
 	int method = 2;
+	//set_num_thread(4);
 
 	clock_t t0 = clock();
 	if (method == 0)
 	{
-		mb(Range(0, m.rows));
-		nb(Range(0, n.rows));
+		m_par(Range(0, m.rows));
+		n_par(Range(0, n.rows));
+	}
+	else if (method == 1)
+	{
+		parallel_for(Range(0, n.rows), n_par);
+		parallel_for(Range(0, m.rows), m_par);
 	}
 	else
 	{
-		parallel_for(Range(0, m.rows), mb);
-		parallel_for(Range(0, n.rows), nb);
+		// 先多后少
+		parallel_for(Range(0, m.rows), m_par);
+		parallel_for(Range(0, n.rows), n_par);
 	}
 	clock_t t1 = clock();
 
