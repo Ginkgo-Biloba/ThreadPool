@@ -102,7 +102,7 @@ bool savePGM(Mat const& img, char const* name)
 
 int main()
 {
-	Mat m(3, 400), n(2000, 2000);
+	Mat m(900, 900), n(2000, 2000);
 	Mandelbrot m_par(m), n_par(n);
 	int method = 2;
 	//set_num_thread(4);

@@ -150,7 +150,7 @@ public:
 		// make one task smaller
 		chunk = (chunk + 7) / 8;
 		// if assert failed, consider scale or offset the range
-		assert(static_cast<int64_t>(end) - start < INT_MAX - chunk);
+		assert(static_cast<int64_t>(end) - start < INT_MAX - n);
 		assert(static_cast<int64_t>(end) < INT_MAX - n * chunk);
 		finished = completed_count = active_count = 0;
 	}
@@ -303,7 +303,8 @@ TPWorker::~TPWorker()
 	if (created)
 	{
 		pthread_mutex_lock(&mutex_job);
-		assert(!job && !stoped);
+		assert(!stoped);
+		job = nullptr;
 		stoped = 1;
 		wake_signal = 1;
 		pthread_mutex_unlock(&mutex_job);
@@ -466,7 +467,7 @@ int TPImplement::get()
 
 void TPImplement::run(Range const& range, TPLoopBody const& body)
 {
-	if (numThread == 0)
+	if (get() <= 1)
 	{
 		body(range);
 		return;
@@ -476,12 +477,11 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	pthread_mutex_lock(&mutex_pool);
 	TPJob job(range, body, numThread + 1);
 	assert(numThread == static_cast<int>(workers.size()));
-	pthread_mutex_unlock(&mutex_pool);
-
 	for (int i = 0; i < numThread; ++i)
 		workers[i].assign(&job);
 	job.execute(false);
 	assert(atomic_fetch_add(&(job.start), 0) >= range.end);
+	pthread_mutex_unlock(&mutex_pool);
 
 	int finished = atomic_fetch_add(&(job.finished), 0);
 	int active = atomic_fetch_add(&(job.active_count), 0);
@@ -591,8 +591,11 @@ int ThreadPool::get() const
 
 void ThreadPool::run(Range const& range, TPLoopBody const& body, bool usepar) const
 {
+	if (range.end <= range.start)
+		return;
+
 	// 有时候想让外面的 parallel_for 单线程跑，而内部嵌套的并行
-	usepar |= (range.end <= range.start + 1);
+	usepar |= (range.end == range.start + 1);
 	if (!usepar)
 	{
 		body(range);
