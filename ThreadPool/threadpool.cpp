@@ -6,9 +6,6 @@
 #include "atomicop.hpp"
 using std::vector;
 
-#undef NDEBUG
-#include <cassert>
-
 /*
 * 0. None
 * 1. Parallel Patterns Library
@@ -48,13 +45,10 @@ using std::vector;
 #  include <sys/types.h>
 #  if defined __ANDROID__
 #    include <sys/sysconf.h>
+#    include <android/log.h>
 #  elif defined __APPLE__
 #    include <sys/sysctl.h>
 #  endif
-#endif
-
-#if defined __ANDROID__
-#  include <android/log.h>
 #endif
 
 #if defined __i386__ || defined __x86_64__ || defined _M_IX86 || defined _M_X64
@@ -93,34 +87,67 @@ inline void nop_pause(int delay)
 #elif defined _MSC_VER && (defined _M_ARM || defined M_ARM64)
 		__nop();
 #else
-#  warning "can't detect `pause' (CPU-yield) instruction on the target platform, \
+		#  warning "can't detect `pause' (CPU-yield) instruction on the target platform, \
 		specify GK_Pause(v) definition via compiler flags"
 # endif
 	}
 }
 
+
 // printf and fprintf is not thread safe in GCC
-static void log_info(char const* fmt, ...)
+void log_printf(bool segsev, char const* fmt, ...)
 {
-#if 0
-	char buf[1 << 16];
+	char buf[1 << 14];
 	va_list args;
 	va_start(args, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 	buf[sizeof(buf) - 1] = 0;
-	fputs(buf, stdout);
-	// fflush(stdout);
+	if (segsev)
+	{
+		fputs(buf, stderr);
+		fflush(stderr);
 #	if defined __ANDROID__
-	__android_log_print(ANDROID_LOG_INFO, "gk::log_info", buf);
+		__android_log_print(ANDROID_LOG_ERROR, "gk::log_error", buf);
 #	endif
+#if _HAS_EXCEPTIONS
+		throw buf;
 #else
-	(void)(fmt);
+		char volatile* p = reinterpret_cast<char*>(0x2b);
+		*p = 0x2b; // 引发异常
 #endif
+	}
+	else
+	{
+		fputs(buf, stdout);
+#	if defined __ANDROID__
+		__android_log_print(ANDROID_LOG_INFO, "gk::log_printf", buf);
+#	endif
+	}
 }
 
-//////////////////// TPJob ////////////////////
+#define log_info(...) log_printf(false, __VA_ARGS__)
 
+#define log_error(...) log_printf(true, __VA_ARGS__)
+
+#ifdef _MSC_VER
+#  define GK_Func __FUNCTION__
+#elif defined __GNUC__
+#  define GK_Func __PRETTY_FUNCTION__
+#else 
+#  define GK_Func "Can_Not_Get_Func_Name"
+#endif
+
+// expr in C assert only evaluated once ?
+#define GK_Assert(expr) do \
+	{ \
+		if (!(expr)) \
+			log_error("GK_Assert failed: " #expr " in %s, file %s, line %d\n", \
+				GK_Func, __FILE__, __LINE__); \
+	} while(0)
+
+
+//////////////////// TPJob ////////////////////
 
 class TPJob
 {
@@ -144,21 +171,23 @@ public:
 	TPJob(Range const& range, TPLoopBody const& b, int n)
 		: body(b), start(range.start), end(range.end)
 	{
-		assert(2 <= n);
+		GK_Assert(2 <= n);
 		start = range.start; end = range.end;
 		chunk = (end - start + n - 1) / n;
 		// make one task smaller
 		chunk = (chunk + 7) / 8;
-		// if assert failed, consider scale or offset the range
-		assert(static_cast<int64_t>(end) - start < INT_MAX - n);
-		assert(static_cast<int64_t>(end) < INT_MAX - n * chunk);
+		// if GK_Assert failed, consider scale or offset the range
+		GK_Assert(static_cast<int64_t>(end) - start < INT_MAX - n);
+		GK_Assert(static_cast<int64_t>(end) < INT_MAX - n * chunk);
 		finished = completed_count = active_count = 0;
+		log_info("job %p has been created\n", this);
 	}
 
 	~TPJob()
 	{
-		assert(atomic_fetch_add(&finished, 0));
-		assert(atomic_fetch_add(&start, 0) >= end);
+		GK_Assert(atomic_fetch_add(&finished, 0));
+		GK_Assert(atomic_fetch_add(&start, 0) >= end);
+		log_info("job %p has been finished\n", this);
 	}
 
 	int execute(bool spawned)
@@ -177,9 +206,8 @@ public:
 		int fin = atomic_fetch_add(&finished, 0);
 		if (spawned && fin)
 		{
-			log_info("xxxxx BUG xxxxxx\n\tjob %p %d, %d, %d\n",
+			log_error("xxxxx BUG xxxxxx\n\tjob %p %d, %d, %d\n",
 				this, R.start, active_count, completed_count);
-			assert(!fin);
 		}
 		return task;
 	}
@@ -219,7 +247,7 @@ public:
 #endif
 
 	TPWorker(TPWorker&&) = default;
-	TPWorker(TPImplement* pppl, int id);
+	TPWorker(TPImplement* pool, int id);
 	~TPWorker();
 	void assign(TPJob* job);
 	void loop();
@@ -256,7 +284,7 @@ public:
 };
 
 
-//////////////////// PThreads ////////////////////
+//////////////////// POSIX Threads ////////////////////
 
 #if defined HAVE_PTHREADS_PF
 
@@ -271,20 +299,18 @@ TPWorker::TPWorker(TPImplement* p, int i)
 	: pool(p), job(nullptr), id(i), created(0), stoped(0), wake_signal(0)
 {
 	int err = 0;
-	assert(p && "must work with TPImplement");
+	GK_Assert(p && "must work with TPImplement");
 	log_info("TPImplement: create worker %d\n", id);
 	err = pthread_mutex_init(&mutex_job, NULL);
 	if (err != 0)
 	{
-		log_info("worker %d can not init mutex, err = %d\n", id, err);
-		assert(err == 0); // TODO
+		log_error("worker %d can not init mutex, err = %d\n", id, err);
 		return;
 	}
 	err = pthread_cond_init(&cond_job, NULL);
 	if (err != 0)
 	{
-		log_info("worker %d can not init cond, err = %d\n", id, err);
-		assert(err == 0); // TODO
+		log_error("worker %d can not init cond, err = %d\n", id, err);
 		return;
 	}
 	err = pthread_create(&posix_thread, NULL, TPWorker_Func, this);
@@ -303,7 +329,7 @@ TPWorker::~TPWorker()
 	if (created)
 	{
 		pthread_mutex_lock(&mutex_job);
-		assert(!stoped);
+		GK_Assert(!stoped && "repeate stop");
 		job = nullptr;
 		stoped = 1;
 		wake_signal = 1;
@@ -321,13 +347,13 @@ void TPWorker::assign(TPJob* jptr)
 	if (created == 0)
 		return;
 	log_info("worker %d is assigned job %p\n", id, jptr);
-	assert(!stoped && "has stoped");
+	GK_Assert(!stoped && "has stoped");
 	pthread_mutex_lock(&mutex_job);
-	// job may has been finished before `I' wake and do it
-	// assert(!job && "in working");
+	// job may has been finished before `I' wake
+	// GK_Assert(!job && "in working");
 	// if use shared_ptr<TPJob>, here we can check if job is finished
 	// otherwise this check is done in ~TPJob()
-	// assert(!job || job->finished);
+	// GK_Assert(!job || job->finished);
 	job = jptr;
 	pthread_mutex_unlock(&mutex_job);
 	atomic_exchange(&wake_signal, 1);
@@ -338,7 +364,7 @@ void TPWorker::assign(TPJob* jptr)
 void TPWorker::loop()
 {
 	// 立即执行？可能没有主线程安排任务速度快
-	// assert(!job && "worker start just now");
+	// GK_Assert(!job && "worker start just now");
 	log_info("worker %d start now\n", id);
 	int const active_wait = 1024;
 
@@ -346,7 +372,7 @@ void TPWorker::loop()
 	{
 		if (0 < active_wait)
 		{
-			log_info("worker %d pause\n", id);
+			log_info("worker %d loop (pause)...\n", id);
 			for (int i = 0; i < active_wait; ++i)
 			{
 				if (atomic_fetch_add(&wake_signal, 0))
@@ -405,8 +431,8 @@ TPImplement::TPImplement(int n)
 	err |= pthread_mutex_init(&mutex_pool, NULL);
 	err |= pthread_mutex_init(&mutex_work, NULL);
 	err |= pthread_cond_init(&cond_work, NULL);
-	assert(!err && "failed to initialize TPImplement (pthreads)");
-	numTrdMax = pthread_num_processors_np();
+	GK_Assert(!err && "failed to initialize TPImplement (pthreads)");
+	numTrdMax = pthread_num_processors_np() * 2; // HT or SMT ?
 	numThread = 0;
 	// see comment of `TPWorker& operator =(TPWorker&&)'
 	workers.reserve(numTrdMax);
@@ -434,8 +460,8 @@ void TPImplement::set(int n)
 	pthread_mutex_lock(&mutex_pool);
 	numThread = n;
 	if (numThread < 0)
-		numThread = numTrdMax;
-	numThread = std::max(numThread - 1, 0);
+		numThread = numTrdMax / 2;
+	numThread = std::min(std::max(numThread - 1, 0), numTrdMax);
 	if (numThread > 0)
 	{
 		int org = static_cast<int>(workers.size());
@@ -476,11 +502,11 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	int const active_wait = 10240;
 	pthread_mutex_lock(&mutex_pool);
 	TPJob job(range, body, numThread + 1);
-	assert(numThread == static_cast<int>(workers.size()));
+	GK_Assert(numThread == static_cast<int>(workers.size()));
 	for (int i = 0; i < numThread; ++i)
 		workers[i].assign(&job);
 	job.execute(false);
-	assert(atomic_fetch_add(&(job.start), 0) >= range.end);
+	GK_Assert(atomic_fetch_add(&(job.start), 0) >= range.end);
 	pthread_mutex_unlock(&mutex_pool);
 
 	int finished = atomic_fetch_add(&(job.finished), 0);
@@ -496,9 +522,9 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 		return;
 	}
 
-	if (active_wait > 0)
+	if (0 < active_wait)
 	{
-		log_info("TPImplement: prepare pause job %p\n", &job);
+		log_info("TPImplement: loop (pause) for job %p\n", &job);
 		// don't spin too much in any case (inaccurate getTickCount())
 		for (int i = 0; i < active_wait; ++i)
 		{
@@ -513,7 +539,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	}
 	if (!finished)
 	{
-		log_info("TPImplement: prepare wait job %p\n", &job);
+		log_info("TPImplement: wait (sleep) for job %p\n", &job);
 		pthread_mutex_lock(&mutex_work);
 		for (;;)
 		{
@@ -571,10 +597,10 @@ void ThreadPool::set(int n)
 {
 #if HAVE_PARALLEL_FRAMEWORK
 	int depth = atomic_fetch_add(nestedptr, 1);
-	assert(depth == 0 && "do not change thread number when working");
+	GK_Assert(depth == 0 && "do not change thread number when working");
 	impl->set(n);
 	depth = atomic_fetch_add(nestedptr, -1);
-	assert(depth == 1 && "do not work when changing thread number");
+	GK_Assert(depth == 1 && "do not work when changing thread number");
 #else 
 	(void)(n);
 #endif

@@ -87,7 +87,7 @@ public:
 };
 
 
-bool savePGM(Mat const& img, char const* name)
+bool pgm_write(Mat const& img, char const* name)
 {
 	size_t size = sizeof(uchar) * img.rows * img.cols;
 	std::ofstream ofs;
@@ -105,7 +105,9 @@ int main()
 	Mat m(900, 900), n(2000, 2000);
 	Mandelbrot m_par(m), n_par(n);
 	int method = 2;
-	//set_num_thread(4);
+	int nums[6] = { 0, 1, 2, 6, 3, 5 };
+	for (size_t i = 0; i < 6; ++i)
+		set_num_thread(nums[i]);
 
 	clock_t t0 = clock();
 	if (method == 0)
@@ -126,8 +128,8 @@ int main()
 	}
 	clock_t t1 = clock();
 
-	savePGM(m, "G:\\Sample\\mandelbrot0.pgm");
-	savePGM(n, "G:\\Sample\\mandelbrot1.pgm");
+	pgm_write(m, "G:\\Sample\\mandelbrot0.pgm");
+	pgm_write(n, "G:\\Sample\\mandelbrot1.pgm");
 	printf("Hello, World! %d, %f ms\n",
 		get_num_thread(), 1e3 * (t1 - t0) / CLOCKS_PER_SEC);
 	return 0;
