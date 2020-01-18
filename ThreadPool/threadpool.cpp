@@ -180,7 +180,7 @@ public:
 		GK_Assert(static_cast<int64_t>(end) - start < INT_MAX - n);
 		GK_Assert(static_cast<int64_t>(end) < INT_MAX - n * chunk);
 		finished = completed_count = active_count = 0;
-		log_info("job %p has been created\n", this);
+		log_info("job %p has been created (%d, %d)\n", this, start, end);
 	}
 
 	~TPJob()
@@ -366,7 +366,7 @@ void TPWorker::loop()
 	// 立即执行？可能没有主线程安排任务速度快
 	// GK_Assert(!job && "worker start just now");
 	log_info("worker %d start now\n", id);
-	int const active_wait = 1024;
+	int active_wait = 1024;
 
 	while (!stoped)
 	{
@@ -432,7 +432,7 @@ TPImplement::TPImplement(int n)
 	err |= pthread_mutex_init(&mutex_work, NULL);
 	err |= pthread_cond_init(&cond_work, NULL);
 	GK_Assert(!err && "failed to initialize TPImplement (pthreads)");
-	numTrdMax = pthread_num_processors_np() * 2; // HT or SMT ?
+	numTrdMax = pthread_num_processors_np() * 2; // not too much
 	numThread = 0;
 	// see comment of `TPWorker& operator =(TPWorker&&)'
 	workers.reserve(numTrdMax);
@@ -499,7 +499,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 		return;
 	}
 
-	int const active_wait = 10240;
+	int active_wait = 10240;
 	pthread_mutex_lock(&mutex_pool);
 	TPJob job(range, body, numThread + 1);
 	GK_Assert(numThread == static_cast<int>(workers.size()));

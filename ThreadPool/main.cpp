@@ -42,45 +42,48 @@ public:
 
 class Mandelbrot : public gk::TPLoopBody
 {
-	enum { Iteration = 1000 };
+	enum { Iteration = 300 };
 	Mat& m;
-	double ppi;
+	int rows, cols;
+	double x0, y0, ppi;
 public:
-	Mandelbrot(Mat& mat) : m(mat)
+	Mandelbrot(Mat& mat, double ox, double oy, double d)
+		: m(mat), rows(m.rows), cols(m.cols)
 	{
-		if (m.rows * m.cols > 0)
-			ppi = 4.0 / std::min(m.rows, m.cols);
-		else
-			ppi = 0;
+		x0 = ox - d * 0.5;
+		y0 = oy - d * 0.5;
+		ppi = d / std::min(rows, cols);
 	}
 
-	// 逐像素？逐行？
+	// 逐行
 	void operator ()(Range const& range) const override
 	{
-		int hrow = m.rows / 2;
-		int hcol = m.cols * 2 / 3;
 		for (int h = range.start; h < range.end; ++h)
 		{
-			double Y = (h - hrow) * ppi;
-			for (int w = 0; w < m.cols; ++w)
+			uchar* M = m.data + h * cols;
+			double Y = y0 + h * ppi;
+			for (int w = 0; w < cols; ++w)
 			{
-				double X = (w - hcol) * ppi;
-				double x = 0, y = 0, z = 0;
-				int iter = 0, val = 0;
-				do
+				double X = x0 + w * ppi;
+				double x = 0, y = 0, t;
+				double z = x * x + y * y;
+				int iter = 0;
+				while (z < 4 && iter < Iteration)
 				{
-					z = x * x - y * y + X;
-					y = 2 * x * y + Y;
-					x = z;
-					z = x * x + y * y;
 					++iter;
-				} while (z < 4 && iter < Iteration);
-				if (iter < Iteration)
-				{
-					x = sqrt(iter / static_cast<double>(Iteration));
-					val = static_cast<int>(x * 255 + 0.5);
+					t = x * x - y * y + X;
+					y = 2 * x * y + Y;
+					x = t;
+					z = x * x + y * y;
 				}
-				m.data[h * m.cols + w] = static_cast<uchar>(val);
+				// make gradient smother
+				if (z > 4)
+					z = iter - log2(log2(z) * 0.5);
+				else
+					z = iter;
+				// enhance contrast
+				z *= 255.0 / Iteration;
+				M[w] = static_cast<uchar>(z);
 			}
 		}
 	}
@@ -100,36 +103,29 @@ bool pgm_write(Mat const& img, char const* name)
 }
 
 
+void draw(double ox, double oy, double d, int rc)
+{
+	Mat img(rc, rc);
+	char buf[1 << 10];
+	parallel_for(Range(0, rc), Mandelbrot(img, ox, oy, d), true);
+	sprintf(buf, "G:/Sample/mandelbrot_%f.pgm", d);
+	pgm_write(img, buf);
+}
+
+
 int main()
 {
-	Mat m(900, 900), n(2000, 2000);
-	Mandelbrot m_par(m), n_par(n);
-	int method = 2;
-	int nums[6] = { 0, 1, 2, 6, 3, 5 };
+	int nums[6] = { 0, 1, 2, 5, 3, -1 };
 	for (size_t i = 0; i < 6; ++i)
 		set_num_thread(nums[i]);
 
 	clock_t t0 = clock();
-	if (method == 0)
-	{
-		m_par(Range(0, m.rows));
-		n_par(Range(0, n.rows));
-	}
-	else if (method == 1)
-	{
-		parallel_for(Range(0, n.rows), n_par);
-		parallel_for(Range(0, m.rows), m_par);
-	}
-	else
-	{
-		// 先多后少
-		parallel_for(Range(0, m.rows), m_par);
-		parallel_for(Range(0, n.rows), n_par);
-	}
+	double x = 0.27322626, y = 0.595153338;
+	draw(-0.5, 0, 1.5, 1000);
+	for (int i = 2; i < 7; ++i)
+		draw(x, y, pow(0.2, i - 1), 1000);
 	clock_t t1 = clock();
 
-	pgm_write(m, "G:\\Sample\\mandelbrot0.pgm");
-	pgm_write(n, "G:\\Sample\\mandelbrot1.pgm");
 	printf("Hello, World! %d, %f ms\n",
 		get_num_thread(), 1e3 * (t1 - t0) / CLOCKS_PER_SEC);
 	return 0;
