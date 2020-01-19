@@ -47,12 +47,12 @@ class Mandelbrot : public gk::TPLoopBody
 	int rows, cols;
 	double x0, y0, ppi;
 public:
-	Mandelbrot(Mat& mat, double ox, double oy, double d)
+	Mandelbrot(Mat& mat, double ox, double oy, double radius)
 		: m(mat), rows(m.rows), cols(m.cols)
 	{
-		x0 = ox - d * 0.5;
-		y0 = oy - d * 0.5;
-		ppi = d / std::min(rows, cols);
+		x0 = ox - radius;
+		y0 = oy - radius;
+		ppi = 2 * radius / std::min(rows, cols);
 	}
 
 	// 逐行
@@ -103,12 +103,12 @@ bool pgm_write(Mat const& img, char const* name)
 }
 
 
-void draw(double ox, double oy, double d, int rc)
+void draw(double ox, double oy, double radius, int size)
 {
-	Mat img(rc, rc);
+	Mat img(size, size);
 	char buf[1 << 10];
-	parallel_for(Range(0, rc), Mandelbrot(img, ox, oy, d), true);
-	sprintf(buf, "G:/Sample/mandelbrot_%f.pgm", d);
+	parallel_for(Range(0, size), Mandelbrot(img, ox, oy, radius), true);
+	sprintf(buf, "G:/Sample/mandelbrot_%f.pgm", radius);
 	pgm_write(img, buf);
 }
 
@@ -121,7 +121,7 @@ int main()
 
 	clock_t t0 = clock();
 	double x = 0.27322626, y = 0.595153338;
-	draw(-0.5, 0, 1.5, 1000);
+	draw(-0.75, 0, 1.5, 1000);
 	for (int i = 2; i < 7; ++i)
 		draw(x, y, pow(0.2, i - 1), 1000);
 	clock_t t1 = clock();
