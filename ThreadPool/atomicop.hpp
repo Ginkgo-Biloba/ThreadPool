@@ -1,10 +1,6 @@
 ﻿#pragma once
 
-static_assert(true
-	&& sizeof(char) == 1
-	&& sizeof(short) == 2
-	&& sizeof(int) == 4,
-	"size_required");
+static_assert(sizeof(char) == 1 && sizeof(short) == 2 && sizeof(int) == 4, "size_required");
 
 // prefer to use int, because I have not used/tested char/short ...
 
@@ -12,7 +8,6 @@ static_assert(true
 
 // https://docs.microsoft.com/en-us/cpp/intrinsics/intrinsics-available-on-all-architectures?view=vs-2019
 #include <intrin.h>
-#include <atomic>
 
 inline void atomic_thread_fence()
 {

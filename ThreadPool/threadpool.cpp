@@ -1,17 +1,23 @@
 ﻿#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdint>
 #include <vector>
 #include "threadpool.hpp"
 #include "atomicop.hpp"
 using std::vector;
 
 /*
-* 0. None
-* 1. Parallel Patterns Library
+IMPORTANT: always use the same order of defines
+0. HAVE_NONE
+1. HAVE_PTHREADS_PF
+	- POSIX Threads
+2. HAVE_WIN32_THREAD
+	- Windows CRT Thread (SRWLOCK + CONDITION_VARIABLE)
+	- Available on Windows Vista and later
 */
 #ifndef HAVE_PARALLEL_FRAMEWORK
-#  define HAVE_PARALLEL_FRAMEWORK 1
+#  define HAVE_PARALLEL_FRAMEWORK 2
 #endif
 
 #if HAVE_PARALLEL_FRAMEWORK == 0
@@ -19,24 +25,22 @@ using std::vector;
 #elif HAVE_PARALLEL_FRAMEWORK == 1
 #  pragma message ("HAVE_PARALLEL_FRAMEWORK => HAVE_PTHREADS_PF")
 #  define HAVE_PTHREADS_PF
+#elif HAVE_PARALLEL_FRAMEWORK == 2
+#  pragma message ("HAVE_PARALLEL_FRAMEWORK => HAVE_WIN32_THREAD")
+#  define HAVE_WIN32_THREAD
 #else
 #  error must select one implementation
 #endif
 
-/* IMPORTANT: always use the same order of defines
-- HAVE_PTHREADS_PF - pthreads if available
-*/
-
 #if defined HAVE_PTHREADS_PF
-#include <pthread.h>
-#endif
-
-#if defined _WIN32 || defined _WINCE
-#include <Windows.h>
-#undef small
-#undef min
-#undef max
-#undef abs
+#  include <pthread.h>
+#elif defined HAVE_WIN32_THREAD
+#  include <Windows.h>
+#  include <process.h>
+#  undef small
+#  undef min
+#  undef max
+#  undef abs
 #endif
 
 #if defined __linux__ || defined __APPLE__ || defined __GLIBC__ || defined __HAIKU__
@@ -64,12 +68,12 @@ namespace gk
 {
 
 // Spin lock's CPU-level yield (required for Hyper-Threading)
-inline void nop_pause(int delay)
+inline void yield_pause(int delay)
 {
 	for (; delay > 0; --delay)
 	{
-#ifdef GK_Pause
-		GK_Pause(v)
+#ifdef NOP_PAUSE
+		NOP_PAUSE(v)
 #elif defined __GNUC__ && (defined __i386__ || defined __x86_64__)
 #  if !defined(__SSE2__)
 		__asm__ __volatile__("rep; nop");
@@ -88,7 +92,7 @@ inline void nop_pause(int delay)
 		__nop();
 #else
 		#  warning "can't detect `pause' (CPU-yield) instruction on the target platform, \
-		specify GK_Pause(v) definition via compiler flags"
+		specify NOP_PAUSE(v) definition via compiler flags"
 # endif
 	}
 }
@@ -138,11 +142,11 @@ void log_printf(bool segsev, char const* fmt, ...)
 #  define GK_Func "Can_Not_Get_Func_Name"
 #endif
 
-// expr in C assert only evaluated once ?
-#define GK_Assert(expr) do \
+// expr in C assert evaluated exactly only once ?
+#define log_assert(expr) do \
 	{ \
 		if (!(expr)) \
-			log_error("GK_Assert failed: " #expr " in %s, file %s, line %d\n", \
+			log_printf(true, "log_assert failed: " #expr " in %s, file %s, line %d\n", \
 				GK_Func, __FILE__, __LINE__); \
 	} while(0)
 
@@ -171,22 +175,22 @@ public:
 	TPJob(Range const& range, TPLoopBody const& b, int n)
 		: body(b), start(range.start), end(range.end)
 	{
-		GK_Assert(2 <= n);
+		log_assert(2 <= n);
 		start = range.start; end = range.end;
 		chunk = (end - start + n - 1) / n;
 		// make one task smaller
 		chunk = (chunk + 7) / 8;
-		// if GK_Assert failed, consider scale or offset the range
-		GK_Assert(static_cast<int64_t>(end) - start < INT_MAX - n);
-		GK_Assert(static_cast<int64_t>(end) < INT_MAX - n * chunk);
+		// if log_assert failed, consider scale or offset the range
+		log_assert(static_cast<int64_t>(end) - start < INT_MAX - n);
+		log_assert(static_cast<int64_t>(end) < INT_MAX - n * chunk);
 		finished = completed_count = active_count = 0;
 		log_info("job %p has been created (%d, %d)\n", this, start, end);
 	}
 
 	~TPJob()
 	{
-		GK_Assert(atomic_fetch_add(&finished, 0));
-		GK_Assert(atomic_fetch_add(&start, 0) >= end);
+		log_assert(atomic_fetch_add(&finished, 0));
+		log_assert(atomic_fetch_add(&start, 0) >= end);
 		log_info("job %p has been finished\n", this);
 	}
 
@@ -221,6 +225,8 @@ namespace details
 
 class TPWorker
 {
+	enum { Active_Wait = 1024 };
+
 	TPWorker(TPWorker const&) = delete;
 	TPWorker& operator =(TPWorker const&) = delete;
 
@@ -235,18 +241,25 @@ class TPWorker
 	TPJob* job;
 
 public:
+	// for emplace_back
+	TPWorker(TPWorker&&) = default;
+
 	// the index in the vector `TPImplement::workers'
 	int const id;
 	int created, stoped;
 	int wake_signal;
 
 #if defined HAVE_PTHREADS_PF
-	pthread_mutex_t mutex_job;
+	pthread_mutex_t lock_job;
 	pthread_cond_t cond_job;
 	pthread_t posix_thread;
+#elif defined HAVE_WIN32_THREAD
+	SRWLOCK lock_job; // only use its exclusive mode
+	CONDITION_VARIABLE cond_job;
+	uintptr_t win32_thread;
+	unsigned win32_id;
 #endif
 
-	TPWorker(TPWorker&&) = default;
 	TPWorker(TPImplement* pool, int id);
 	~TPWorker();
 	void assign(TPJob* job);
@@ -260,6 +273,8 @@ public:
 
 class TPImplement
 {
+	enum { Active_Wait = 10240 };
+
 	// numThread 是子线程的数量
 	int numTrdMax, numThread;
 	std::vector<TPWorker> workers; // 子线程
@@ -271,9 +286,13 @@ class TPImplement
 
 public:
 #if defined HAVE_PTHREADS_PF
-	pthread_mutex_t mutex_pool;
-	pthread_mutex_t mutex_work;
+	pthread_mutex_t lock_pool;
+	pthread_mutex_t lock_work;
 	pthread_cond_t cond_work;
+#elif defined HAVE_WIN32_THREAD
+	SRWLOCK lock_pool;
+	SRWLOCK lock_work;
+	CONDITION_VARIABLE cond_work;
 #endif
 
 	TPImplement(int n);
@@ -286,22 +305,77 @@ public:
 
 //////////////////// POSIX Threads ////////////////////
 
+#if defined HAVE_PTHREADS_PF || defined HAVE_WIN32_THREAD
+
+
 #if defined HAVE_PTHREADS_PF
 
 static void* TPWorker_Func(void* worker)
 {
 	static_cast<TPWorker*>(worker)->loop();
-	return worker;
+	return worker; // just return a value
 }
+
+inline void acquire_lock(pthread_mutex_t* pmtx)
+{
+	pthread_mutex_lock(pmtx);
+}
+
+inline void release_lock(pthread_mutex_t* pmtx)
+{
+	pthread_mutex_unlock(pmtx);
+}
+
+inline void wait_condvar(pthread_cond_t* cond, pthread_mutex_t* pmtx)
+{
+	pthread_cond_wait(cond, pmtx);
+}
+
+inline void wake_condvar(pthread_cond_t* cond)
+{
+	pthread_cond_signal(cond);
+}
+
+#elif defined HAVE_WIN32_THREAD
+
+static unsigned _stdcall TPWorker_Func(void* worker)
+{
+	TPWorker* ptr = static_cast<TPWorker*>(worker);
+	ptr->loop();
+	return ptr->id; // just return a value
+}
+
+inline void acquire_lock(SRWLOCK* srwl)
+{
+	AcquireSRWLockExclusive(srwl);
+}
+
+inline void release_lock(SRWLOCK* srwl)
+{
+	ReleaseSRWLockExclusive(srwl);
+}
+
+inline void wait_condvar(CONDITION_VARIABLE* cond, SRWLOCK* srwl)
+{
+	SleepConditionVariableSRW(cond, srwl, INFINITE, 0);
+}
+
+inline void wake_condvar(CONDITION_VARIABLE* cond)
+{
+	WakeConditionVariable(cond);
+}
+
+#endif
 
 
 TPWorker::TPWorker(TPImplement* p, int i)
 	: pool(p), job(nullptr), id(i), created(0), stoped(0), wake_signal(0)
 {
+	log_assert(p && "must work with TPImplement");
+	log_info("TPWork: worker %d is being created\n", id);
 	int err = 0;
-	GK_Assert(p && "must work with TPImplement");
-	log_info("TPImplement: create worker %d\n", id);
-	err = pthread_mutex_init(&mutex_job, NULL);
+#if defined HAVE_PTHREADS_PF
+	err = pthread_mutex_init(&lock_job, NULL);
 	if (err != 0)
 	{
 		log_error("worker %d can not init mutex, err = %d\n", id, err);
@@ -319,26 +393,55 @@ TPWorker::TPWorker(TPImplement* p, int i)
 		log_info("worker %d can not create mutex, err = %d\n", id, err);
 		return;
 	}
+#elif defined HAVE_WIN32_THREAD
+	InitializeSRWLock(&lock_job);
+	InitializeConditionVariable(&cond_job);
+	err = GetLastError();
+	if (err != ERROR_SUCCESS)
+	{
+		log_error("worker %d can not init cond, err = %x\n", id, err);
+		return;
+	}
+	// not CreateThread for initialize CRT runtime
+	win32_thread = _beginthreadex(NULL, 0, TPWorker_Func, this, 0, &win32_id);
+	err = GetLastError();
+	if ((win32_thread == 0) || (err != ERROR_SUCCESS))
+	{
+		log_info("worker %d can not create mutex, "
+			"handle = %zx, win32_id = %u, err = %x\n",
+			id, static_cast<size_t>(win32_thread), win32_id, err);
+		return;
+	}
+#endif
 	created = 1;
 }
 
 
 TPWorker::~TPWorker()
 {
-	log_info("TPImplement: destroy worker %d\n", id);
+	log_info("TPWork: worker %d is being destroyed\n", id);
 	if (created)
 	{
-		pthread_mutex_lock(&mutex_job);
-		GK_Assert(!stoped && "repeate stop");
+		acquire_lock(&lock_job);
+		log_assert(!stoped && "repeate stop");
 		job = nullptr;
 		stoped = 1;
-		wake_signal = 1;
-		pthread_mutex_unlock(&mutex_job);
-		pthread_cond_signal(&cond_job);
+		release_lock(&lock_job);
+		atomic_exchange(&wake_signal, 1);
+		wake_condvar(&cond_job);
+#if defined HAVE_PTHREADS_PF
 		pthread_join(posix_thread, NULL);
+#elif defined HAVE_WIN32_THREAD
+		WaitForSingleObjectEx(reinterpret_cast<HANDLE>(win32_thread), INFINITE, true);
+		CloseHandle(reinterpret_cast<HANDLE>(win32_thread));
+#endif
 	}
+#if defined HAVE_PTHREADS_PF
 	pthread_cond_destroy(&cond_job);
-	pthread_mutex_destroy(&mutex_job);
+	pthread_mutex_destroy(&lock_job);
+#elif defined HAVE_WIN32_THREAD
+	// nothing to do with SRWLOCK and CONDITION_VARIABLE	
+#endif
 }
 
 
@@ -347,53 +450,49 @@ void TPWorker::assign(TPJob* jptr)
 	if (created == 0)
 		return;
 	log_info("worker %d is assigned job %p\n", id, jptr);
-	GK_Assert(!stoped && "has stoped");
-	pthread_mutex_lock(&mutex_job);
+	log_assert(!stoped && "has stoped");
+	acquire_lock(&lock_job);
 	// job may has been finished before `I' wake
-	// GK_Assert(!job && "in working");
+	// log_assert(!job && "in working");
 	// if use shared_ptr<TPJob>, here we can check if job is finished
 	// otherwise this check is done in ~TPJob()
-	// GK_Assert(!job || job->finished);
+	// log_assert(!job || job->finished);
 	job = jptr;
-	pthread_mutex_unlock(&mutex_job);
+	release_lock(&lock_job);
 	atomic_exchange(&wake_signal, 1);
-	pthread_cond_signal(&cond_job);
+	wake_condvar(&cond_job);
 }
 
 
 void TPWorker::loop()
 {
 	// 立即执行？可能没有主线程安排任务速度快
-	// GK_Assert(!job && "worker start just now");
+	// log_assert(!job && "worker start just now");
 	log_info("worker %d start now\n", id);
-	int active_wait = 1024;
 
 	while (!stoped)
 	{
-		if (0 < active_wait)
+		log_info("worker %d loop (pause)...\n", id);
+		for (int i = 0; i < Active_Wait; ++i)
 		{
-			log_info("worker %d loop (pause)...\n", id);
-			for (int i = 0; i < active_wait; ++i)
-			{
-				if (atomic_fetch_add(&wake_signal, 0))
-					break;
-				nop_pause(16);
-			}
+			if (atomic_fetch_add(&wake_signal, 0))
+				break;
+			yield_pause(16);
 		}
 
-		pthread_mutex_lock(&mutex_job);
+		acquire_lock(&lock_job);
 		while (!wake_signal)
 		{
 			log_info("worker %d wait (sleep)...\n", id);
-			pthread_cond_wait(&cond_job, &mutex_job);
+			wait_condvar(&cond_job, &lock_job);
 		}
 		TPJob* jptr = job;
 		job = nullptr;
 		wake_signal = 0;
-		pthread_mutex_unlock(&mutex_job);
+		release_lock(&lock_job);
+
 		if (stoped)
 			break;
-
 		if (jptr && (atomic_fetch_add(&(jptr->start), 0) < jptr->end))
 		{
 			int active = atomic_fetch_add(&(jptr->active_count), 1);
@@ -410,16 +509,14 @@ void TPWorker::loop()
 				{
 					log_info("worker %d mark job %p and notify the main thread\n", id, jptr);
 					// to avoid signal miss due pre-check condition empty
-					pthread_mutex_lock(&(pool->mutex_work));
-					pthread_mutex_unlock(&(pool->mutex_work));
-					pthread_cond_signal(&(pool->cond_work));
+					acquire_lock(&(pool->lock_work));
+					release_lock(&(pool->lock_work));
+					wake_condvar(&(pool->cond_work));
 				}
 			}
 		}
 		else
-		{
-			log_info("worker %d no more jobs\n", id);
-		}
+		{ log_info("worker %d no more jobs\n", id); }
 	}
 }
 
@@ -427,18 +524,27 @@ void TPWorker::loop()
 TPImplement::TPImplement(int n)
 {
 	log_info("TPImplement: create TPImplement with n = %d\n", n);
+#if defined HAVE_PTHREADS_PF
 	int err = 0;
-	err |= pthread_mutex_init(&mutex_pool, NULL);
-	err |= pthread_mutex_init(&mutex_work, NULL);
+	err |= pthread_mutex_init(&lock_pool, NULL);
+	err |= pthread_mutex_init(&lock_work, NULL);
 	err |= pthread_cond_init(&cond_work, NULL);
-	GK_Assert(!err && "failed to initialize TPImplement (pthreads)");
+	log_assert(!err && "failed to initialize TPImplement (pthreads)");
 	numTrdMax = pthread_num_processors_np() * 2; // not too much
+#elif defined HAVE_WIN32_THREAD
+	InitializeSRWLock(&lock_pool);
+	InitializeSRWLock(&lock_work);
+	InitializeConditionVariable(&cond_work);
+	SYSTEM_INFO sysinfo;
+	GetSystemInfo(&sysinfo);
+	numTrdMax = sysinfo.dwNumberOfProcessors * 2; // 2 for SMT/HT ?
+#endif
 	numThread = 0;
 	// see comment of `TPWorker& operator =(TPWorker&&)'
 	workers.reserve(numTrdMax);
 #if TP_DEBUG_JOB
 	jobs_done.reserve(1024);
-#endif // 
+#endif
 	set(n);
 }
 
@@ -449,15 +555,19 @@ TPImplement::~TPImplement()
 	log_info("TPImplement: destroy TPImplement with %d workers\n", len);
 	for (; len > 0; --len)
 		workers.pop_back();
+#if defined HAVE_PTHREADS_PF
 	pthread_cond_destroy(&cond_work);
-	pthread_mutex_destroy(&mutex_work);
-	pthread_mutex_destroy(&mutex_pool);
+	pthread_mutex_destroy(&lock_work);
+	pthread_mutex_destroy(&lock_pool);
+#elif defined HAVE_WIN32_THREAD
+	// nothing to do
+#endif
 }
 
 
 void TPImplement::set(int n)
 {
-	pthread_mutex_lock(&mutex_pool);
+	acquire_lock(&lock_pool);
 	numThread = n;
 	if (numThread < 0)
 		numThread = numTrdMax / 2;
@@ -477,16 +587,16 @@ void TPImplement::set(int n)
 		for (; org < numThread; ++org)
 			workers.emplace_back(this, org);
 	}
-	pthread_mutex_unlock(&mutex_pool);
+	release_lock(&lock_pool);
 }
 
 
 int TPImplement::get()
 {
 	int n = 1;
-	pthread_mutex_lock(&mutex_pool);
+	acquire_lock(&lock_pool);
 	n = numThread + 1;
-	pthread_mutex_unlock(&mutex_pool);
+	release_lock(&lock_pool);
 	return n;
 }
 
@@ -499,15 +609,14 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 		return;
 	}
 
-	int active_wait = 10240;
-	pthread_mutex_lock(&mutex_pool);
+	acquire_lock(&lock_pool);
 	TPJob job(range, body, numThread + 1);
-	GK_Assert(numThread == static_cast<int>(workers.size()));
+	log_assert(numThread == static_cast<int>(workers.size()));
 	for (int i = 0; i < numThread; ++i)
 		workers[i].assign(&job);
 	job.execute(false);
-	GK_Assert(atomic_fetch_add(&(job.start), 0) >= range.end);
-	pthread_mutex_unlock(&mutex_pool);
+	log_assert(atomic_fetch_add(&(job.start), 0) >= range.end);
+	release_lock(&lock_pool);
 
 	int finished = atomic_fetch_add(&(job.finished), 0);
 	int active = atomic_fetch_add(&(job.active_count), 0);
@@ -522,25 +631,22 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 		return;
 	}
 
-	if (0 < active_wait)
+	log_info("TPImplement: loop (pause) for job %p\n", &job);
+	// don't spin too much in any case (inaccurate getTickCount())
+	for (int i = 0; i < Active_Wait; ++i)
 	{
-		log_info("TPImplement: loop (pause) for job %p\n", &job);
-		// don't spin too much in any case (inaccurate getTickCount())
-		for (int i = 0; i < active_wait; ++i)
+		finished = atomic_fetch_add(&(job.finished), 0);
+		if (finished)
 		{
-			finished = atomic_fetch_add(&(job.finished), 0);
-			if (finished)
-			{
-				log_info("TPImplement: job %p is finished by others (pause)\n", &job);
-				break;
-			}
-			nop_pause(16);
+			log_info("TPImplement: job %p is finished by others (pause)\n", &job);
+			break;
 		}
+		yield_pause(16);
 	}
 	if (!finished)
 	{
 		log_info("TPImplement: wait (sleep) for job %p\n", &job);
-		pthread_mutex_lock(&mutex_work);
+		acquire_lock(&lock_work);
 		for (;;)
 		{
 			finished = atomic_fetch_add(&(job.finished), 0);
@@ -550,16 +656,16 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 				break;
 			}
 			log_info("TPImplement: wait (sleep)...\n");
-			pthread_cond_wait(&cond_work, &mutex_work);
+			wait_condvar(&cond_work, &lock_work);
 			log_info("TPImplement: wake\n");
 		}
-		pthread_mutex_unlock(&mutex_work);
+		release_lock(&lock_work);
 	}
 
 #if TP_DEBUG_JOB
-	pthread_mutex_lock(&mutex_pool);
+	acquire_lock(&lock_pool);
 	jobs_done.push_back(job);
-	pthread_mutex_unlock(&mutex_pool);
+	release_lock(&lock_pool);
 #endif
 }
 
@@ -597,10 +703,10 @@ void ThreadPool::set(int n)
 {
 #if HAVE_PARALLEL_FRAMEWORK
 	int depth = atomic_fetch_add(nestedptr, 1);
-	GK_Assert(depth == 0 && "do not change thread number when working");
+	log_assert(depth == 0 && "do not change thread number when working");
 	impl->set(n);
 	depth = atomic_fetch_add(nestedptr, -1);
-	GK_Assert(depth == 1 && "do not work when changing thread number");
+	log_assert(depth == 1 && "do not work when changing thread number");
 #else 
 	(void)(n);
 #endif
