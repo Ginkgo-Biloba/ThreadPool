@@ -46,6 +46,7 @@ class Mandelbrot : public gk::TPLoopBody
 	Mat& m;
 	int rows, cols;
 	double x0, y0, ppi;
+
 public:
 	Mandelbrot(Mat& mat, double ox, double oy, double radius)
 		: m(mat), rows(m.rows), cols(m.cols)
@@ -55,7 +56,7 @@ public:
 		ppi = 2 * radius / std::min(rows, cols);
 	}
 
-	// 逐行
+	// per-row
 	void operator ()(Range const& range) const override
 	{
 		for (int h = range.start; h < range.end; ++h)
@@ -81,7 +82,6 @@ public:
 					z = iter - log2(log2(z) * 0.5);
 				else
 					z = iter;
-				// enhance contrast
 				z *= 255.0 / Iteration;
 				M[w] = static_cast<uchar>(z);
 			}
@@ -115,15 +115,16 @@ void draw(double ox, double oy, double radius, int size)
 
 int main()
 {
-	int nums[6] = { 0, 1, 2, 5, 3, -1 };
+	int nums[6] = { 0, 1, 2, 5, 3, 6 };
 	for (size_t i = 0; i < 6; ++i)
 		set_num_thread(nums[i]);
 
 	clock_t t0 = clock();
+	int size = 1000;
 	double x = 0.27322626, y = 0.595153338;
-	draw(-0.75, 0, 1.5, 1000);
+	draw(-0.75, 0, 1.5, size);
 	for (int i = 2; i < 7; ++i)
-		draw(x, y, pow(0.2, i - 1), 1000);
+		draw(x, y, pow(0.2, i - 1), size);
 	clock_t t1 = clock();
 
 	printf("Hello, World! %d, %f ms\n",

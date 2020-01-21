@@ -15,9 +15,14 @@ IMPORTANT: always use the same order of defines
 2. HAVE_WIN32_THREAD
 	- Windows CRT Thread (SRWLOCK + CONDITION_VARIABLE)
 	- Available on Windows Vista and later
+3. HAVE_WIN32_POOL
+	- Windows Thread Pool
+	- Available on Windows Vista and later
+	- ref: https://stackoverflow.com/questions/8357955/windows-api-thread-pool-simple-example
+	- ref: https://dorodnic.com/blog/2015/10/17/windows-threadpool/
 */
 #ifndef HAVE_PARALLEL_FRAMEWORK
-#  define HAVE_PARALLEL_FRAMEWORK 2
+#  define HAVE_PARALLEL_FRAMEWORK 3
 #endif
 
 #if HAVE_PARALLEL_FRAMEWORK == 0
@@ -28,15 +33,20 @@ IMPORTANT: always use the same order of defines
 #elif HAVE_PARALLEL_FRAMEWORK == 2
 #  pragma message ("HAVE_PARALLEL_FRAMEWORK => HAVE_WIN32_THREAD")
 #  define HAVE_WIN32_THREAD
+#elif HAVE_PARALLEL_FRAMEWORK == 3
+#  pragma message ("HAVE_PARALLEL_FRAMEWORK => HAVE_WIN32_POOL")
+#  define HAVE_WIN32_POOL
 #else
 #  error must select one implementation
 #endif
 
 #if defined HAVE_PTHREADS_PF
 #  include <pthread.h>
-#elif defined HAVE_WIN32_THREAD
+#elif defined HAVE_WIN32_THREAD || defined HAVE_WIN32_POOL
 #  include <Windows.h>
-#  include <process.h>
+#  ifdef HAVE_WIN32_THREAD
+#    include <process.h>
+#  endif
 #  undef small
 #  undef min
 #  undef max
@@ -62,41 +72,8 @@ IMPORTANT: always use the same order of defines
 
 #if HAVE_PARALLEL_FRAMEWORK
 
-//////////////////// TPImplement ////////////////////
-
 namespace gk
 {
-
-// Spin lock's CPU-level yield (required for Hyper-Threading)
-inline void yield_pause(int delay)
-{
-	for (; delay > 0; --delay)
-	{
-#ifdef NOP_PAUSE
-		NOP_PAUSE(v)
-#elif defined __GNUC__ && (defined __i386__ || defined __x86_64__)
-#  if !defined(__SSE2__)
-		__asm__ __volatile__("rep; nop");
-#  else
-		_mm_pause();
-#  endif
-#elif defined __GNUC__ && defined __aarch64__
-		asm volatile("yield" ::: "memory");
-#elif defined __GNUC__ && defined __arm__
-		asm volatile("" ::: "memory");
-#elif defined __GNUC__ && defined __PPC64__
-		asm volatile("or 27,27,27" ::: "memory");
-#elif defined _MSC_VER && (defined _M_IX86 || defined _M_X64)
-		_mm_pause();
-#elif defined _MSC_VER && (defined _M_ARM || defined M_ARM64)
-		__nop();
-#else
-		#  warning "can't detect `pause' (CPU-yield) instruction on the target platform, \
-		specify NOP_PAUSE(v) definition via compiler flags"
-# endif
-	}
-}
-
 
 // printf and fprintf is not thread safe in GCC
 void log_printf(bool segsev, char const* fmt, ...)
@@ -149,6 +126,39 @@ void log_printf(bool segsev, char const* fmt, ...)
 			log_printf(true, "log_assert failed: " #expr " in %s, file %s, line %d\n", \
 				GK_Func, __FILE__, __LINE__); \
 	} while(0)
+
+
+// Spin lock's CPU-level yield (required for Hyper-Threading)
+inline void yield_pause(int delay)
+{
+	for (; delay > 0; --delay)
+	{
+#ifdef YIELD_PAUSE
+		YIELD_PAUSE;
+#elif defined __GNUC__ && (defined __i386__ || defined __x86_64__)
+#  if !defined(__SSE2__)
+		__asm__ __volatile__("rep; nop");
+#  else
+		_mm_pause();
+#  endif
+#elif defined __GNUC__ && defined __aarch64__
+		asm volatile("yield" ::: "memory");
+#elif defined __GNUC__ && defined __arm__
+		asm volatile("" ::: "memory");
+# elif defined __GNUC__ && defined __mips__ && __mips_isa_rev >= 2
+		asm volatile("pause" ::: "memory");
+#elif defined __GNUC__ && defined __PPC64__
+		asm volatile("or 27,27,27" ::: "memory");
+#elif defined _MSC_VER && (defined _M_IX86 || defined _M_X64)
+		_mm_pause();
+#elif defined _MSC_VER && (defined _M_ARM || defined M_ARM64)
+		__nop();
+#else
+		#warning "can't detect `pause' (CPU-yield) instruction on the target platform, \
+		specify YIELD_PAUSE definition via compiler flags"
+# endif
+	}
+}
 
 
 //////////////////// TPJob ////////////////////
@@ -223,9 +233,11 @@ namespace details
 
 //////////////////// TPWorker ////////////////////
 
+#if defined HAVE_PTHREADS_PF || defined HAVE_WIN32_THREAD
+
 class TPWorker
 {
-	enum { Active_Wait = 1024 };
+	enum { Active_Wait = 1 << 10 };
 
 	TPWorker(TPWorker const&) = delete;
 	TPWorker& operator =(TPWorker const&) = delete;
@@ -266,6 +278,7 @@ public:
 	void loop();
 };
 
+#endif
 
 //////////////////// TPImplement ////////////////////
 
@@ -273,12 +286,17 @@ public:
 
 class TPImplement
 {
-	enum { Active_Wait = 10240 };
+	TPImplement(TPImplement const&) = delete;
+	TPImplement& operator =(TPImplement const&) = delete;
+	TPImplement& operator =(TPImplement&&) = delete;
+
+	enum { Active_Wait = 1 << 13 };
 
 	// numThread 是子线程的数量
 	int numTrdMax, numThread;
+#if defined HAVE_PTHREADS_PF || defined HAVE_WIN32_THREAD
 	std::vector<TPWorker> workers; // 子线程
-
+#endif
 #if TP_DEBUG_JOB
 	// 调试用，悬垂引用什么的都不是事
 	std::vector<TPJob> jobs_done;
@@ -293,6 +311,11 @@ public:
 	SRWLOCK lock_pool;
 	SRWLOCK lock_work;
 	CONDITION_VARIABLE cond_work;
+#elif defined HAVE_WIN32_POOL
+	TP_POOL* pool; // the actual Thread-Pool resource
+	TP_CALLBACK_ENVIRON envir; // connect work-items to our custom Thread-Pool
+	TP_CLEANUP_GROUP* clnup; // clean things up neatly when we are done
+	SRWLOCK lock_pool;
 #endif
 
 	TPImplement(int n);
@@ -302,18 +325,16 @@ public:
 	void run(Range const& range, TPLoopBody const& body);
 };
 
-
-//////////////////// POSIX Threads ////////////////////
+//////////////////// Implement ////////////////////
 
 #if defined HAVE_PTHREADS_PF || defined HAVE_WIN32_THREAD
 
-
 #if defined HAVE_PTHREADS_PF
 
-static void* TPWorker_Func(void* worker)
+static void* TPWorker_Func(void* vp_worker)
 {
-	static_cast<TPWorker*>(worker)->loop();
-	return worker; // just return a value
+	static_cast<TPWorker*>(vp_worker)->loop();
+	return vp_worker; // just return a value
 }
 
 inline void acquire_lock(pthread_mutex_t* pmtx)
@@ -338,11 +359,11 @@ inline void wake_condvar(pthread_cond_t* cond)
 
 #elif defined HAVE_WIN32_THREAD
 
-static unsigned _stdcall TPWorker_Func(void* worker)
+static unsigned _stdcall TPWorker_Func(void* vp_worker)
 {
-	TPWorker* ptr = static_cast<TPWorker*>(worker);
-	ptr->loop();
-	return ptr->id; // just return a value
+	TPWorker* worker = static_cast<TPWorker*>(vp_worker);
+	worker->loop();
+	return worker->id; // just return a value
 }
 
 inline void acquire_lock(SRWLOCK* srwl)
@@ -396,13 +417,7 @@ TPWorker::TPWorker(TPImplement* p, int i)
 #elif defined HAVE_WIN32_THREAD
 	InitializeSRWLock(&lock_job);
 	InitializeConditionVariable(&cond_job);
-	err = GetLastError();
-	if (err != ERROR_SUCCESS)
-	{
-		log_error("worker %d can not init cond, err = %x\n", id, err);
-		return;
-	}
-	// not CreateThread for initialize CRT runtime
+	// for initialize CRT runtime, not use CreateThread
 	win32_thread = _beginthreadex(NULL, 0, TPWorker_Func, this, 0, &win32_id);
 	err = GetLastError();
 	if ((win32_thread == 0) || (err != ERROR_SUCCESS))
@@ -424,15 +439,15 @@ TPWorker::~TPWorker()
 	{
 		acquire_lock(&lock_job);
 		log_assert(!stoped && "repeate stop");
-		job = nullptr;
 		stoped = 1;
+		job = nullptr;
+		wake_signal = 1;
 		release_lock(&lock_job);
-		atomic_exchange(&wake_signal, 1);
 		wake_condvar(&cond_job);
 #if defined HAVE_PTHREADS_PF
 		pthread_join(posix_thread, NULL);
 #elif defined HAVE_WIN32_THREAD
-		WaitForSingleObjectEx(reinterpret_cast<HANDLE>(win32_thread), INFINITE, true);
+		WaitForSingleObject(reinterpret_cast<HANDLE>(win32_thread), INFINITE);
 		CloseHandle(reinterpret_cast<HANDLE>(win32_thread));
 #endif
 	}
@@ -458,8 +473,8 @@ void TPWorker::assign(TPJob* jptr)
 	// otherwise this check is done in ~TPJob()
 	// log_assert(!job || job->finished);
 	job = jptr;
+	wake_signal = 1;
 	release_lock(&lock_job);
-	atomic_exchange(&wake_signal, 1);
 	wake_condvar(&cond_job);
 }
 
@@ -669,6 +684,126 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 #endif
 }
 
+
+#elif defined HAVE_WIN32_POOL
+
+
+// no need to introduce instance and worker
+static VOID CALLBACK TPJob_Func(PTP_CALLBACK_INSTANCE, PVOID vp_job, PTP_WORK)
+{
+	TPJob* job = static_cast<TPJob*>(vp_job);
+	if (atomic_fetch_add(&(job->start), 0) < job->end)
+		job->execute(true);
+}
+
+
+TPImplement::TPImplement(int n)
+{
+	int err = 0;
+	pool = CreateThreadpool(NULL);
+	if (!pool)
+	{
+		err = GetLastError();
+		log_error("TPImplement: CreateThreadpool failed, err = %d\n", err);
+		return;
+	}
+	if (SetThreadpoolThreadMinimum(pool, 1) != TRUE)
+	{
+		err = GetLastError();
+		log_error("TPImplement: SetThreadpoolThreadMinimum failed, err = %d\n", err);
+		return;
+	}
+
+	InitializeThreadpoolEnvironment(&envir);
+	SetThreadpoolCallbackPool(&envir, pool);
+
+	clnup = CreateThreadpoolCleanupGroup();
+	if (clnup == NULL)
+	{
+		err = GetLastError();
+		log_error("TPImplement: CreateThreadpoolCleanupGroup failed, err = %d\n", err);
+		return;
+	}
+	SetThreadpoolCallbackCleanupGroup(&envir, clnup, NULL);
+
+	InitializeSRWLock(&lock_pool);
+	SYSTEM_INFO sysinfo;
+	GetSystemInfo(&sysinfo);
+	numTrdMax = sysinfo.dwNumberOfProcessors * 2;
+	numThread = 0;
+	set(n);
+}
+
+
+TPImplement::~TPImplement()
+{
+	// Wait for any previously scheduled tasks to complete, but stop accepting new ones
+	CloseThreadpoolCleanupGroupMembers(clnup, FALSE, NULL);
+	// Clean-up resources:
+	CloseThreadpoolCleanupGroup(clnup);
+	DestroyThreadpoolEnvironment(&envir);
+	CloseThreadpool(pool);
+}
+
+
+void TPImplement::set(int n)
+{
+	AcquireSRWLockExclusive(&lock_pool);
+	numThread = n;
+	if (numThread < 0)
+		numThread = numTrdMax / 2;
+	numThread = std::min(std::max(numThread - 1, 0), numTrdMax);
+	if (numThread > 0)
+		SetThreadpoolThreadMaximum(pool, numThread);
+	ReleaseSRWLockExclusive(&lock_pool);
+}
+
+
+int TPImplement::get()
+{
+	int n = 1;
+	AcquireSRWLockExclusive(&lock_pool);
+	n = numThread + 1;
+	ReleaseSRWLockExclusive(&lock_pool);
+	return n;
+}
+
+
+void TPImplement::run(Range const& range, TPLoopBody const& body)
+{
+	if (get() <= 1)
+	{
+		body(range);
+		return;
+	}
+
+	AcquireSRWLockExclusive(&lock_pool);
+	TPJob job(range, body, numThread + 1);
+	do
+	{
+		TP_WORK* work = CreateThreadpoolWork(TPJob_Func, &job, &envir);
+		if (work == NULL)
+		{
+			log_error("TPImplement: CreateThreadpoolWork failed, err = %d", GetLastError());
+			// try or not?
+			body(range);
+			job.finished = 1;
+			break;
+		}
+		for (int i = 0; i < numThread; ++i)
+			SubmitThreadpoolWork(work);
+		job.execute(false);
+		log_assert(job.start >= job.end);
+		log_info("TPImplement: WaitForThreadpoolWorkCallbacks for job %p\n", &job);
+		WaitForThreadpoolWorkCallbacks(work, FALSE);
+		CloseThreadpoolWork(work);
+		job.finished = 1;
+		log_info("TPImplement: done for job %p\n", &job);
+	} while (0);
+	ReleaseSRWLockExclusive(&lock_pool);
+}
+
+
 #endif
 
 }
@@ -680,6 +815,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 
 namespace gk
 {
+
 ThreadPool::ThreadPool(int n)
 {
 #if HAVE_PARALLEL_FRAMEWORK
@@ -699,6 +835,7 @@ ThreadPool::~ThreadPool()
 #endif
 }
 
+
 void ThreadPool::set(int n)
 {
 #if HAVE_PARALLEL_FRAMEWORK
@@ -712,6 +849,7 @@ void ThreadPool::set(int n)
 #endif
 }
 
+
 int ThreadPool::get() const
 {
 #if HAVE_PARALLEL_FRAMEWORK
@@ -720,6 +858,7 @@ int ThreadPool::get() const
 	return 1;
 #endif
 }
+
 
 void ThreadPool::run(Range const& range, TPLoopBody const& body, bool usepar) const
 {
@@ -754,6 +893,7 @@ void ThreadPool::run(Range const& range, TPLoopBody const& body, bool usepar) co
 
 #endif
 }
+
 
 static ThreadPool sgThreadPool;
 }
