@@ -2,10 +2,14 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include "threadpool.hpp"
 #include "atomicop.hpp"
 using std::vector;
+using std::shared_ptr;
+using std::unique_ptr;
+using std::make_shared;
 
 /*
 IMPORTANT: always use the same order of defines
@@ -22,7 +26,7 @@ IMPORTANT: always use the same order of defines
 	- ref: https://dorodnic.com/blog/2015/10/17/windows-threadpool/
 */
 #ifndef HAVE_PARALLEL_FRAMEWORK
-#  define HAVE_PARALLEL_FRAMEWORK 3
+#  define HAVE_PARALLEL_FRAMEWORK 1
 #endif
 
 #if HAVE_PARALLEL_FRAMEWORK == 0
@@ -107,7 +111,7 @@ void log_printf(bool segsev, char const* fmt, ...)
 	}
 }
 
-#define log_info(...) log_printf(false, __VA_ARGS__)
+#define log_info(...) //log_printf(false, __VA_ARGS__)
 
 #define log_error(...) log_printf(true, __VA_ARGS__)
 
@@ -237,24 +241,17 @@ namespace details
 
 class TPWorker
 {
-	enum { Active_Wait = 1 << 10 };
+	enum { Active_Wait = 1024 };
 
 	TPWorker(TPWorker const&) = delete;
 	TPWorker& operator =(TPWorker const&) = delete;
-
-	/* 考虑实现这个函数
-	否则 TPImplement::workers 里面只能放指针，不能放实体
-	因为在 vector 扩容的时候，旧的结构体不会无效化
-	从而导致互斥体、条件变量、线程被多次析构
-	目前在创建子线程前 reserve 足够多，将就着用*/
 	TPWorker& operator =(TPWorker&&) = delete;
+	TPWorker(TPWorker&&) = delete;
 
 	TPImplement* pool;
-	TPJob* job;
+	shared_ptr<TPJob> job;
 
 public:
-	// for emplace_back
-	TPWorker(TPWorker&&) = default;
 
 	// the index in the vector `TPImplement::workers'
 	int const id;
@@ -274,7 +271,7 @@ public:
 
 	TPWorker(TPImplement* pool, int id);
 	~TPWorker();
-	void assign(TPJob* job);
+	void assign(shared_ptr<TPJob>& jshr);
 	void loop();
 };
 
@@ -290,16 +287,16 @@ class TPImplement
 	TPImplement& operator =(TPImplement const&) = delete;
 	TPImplement& operator =(TPImplement&&) = delete;
 
-	enum { Active_Wait = 1 << 13 };
+	enum { Active_Wait = 10240 };
 
 	// numThread 是子线程的数量
 	int numTrdMax, numThread;
 #if defined HAVE_PTHREADS_PF || defined HAVE_WIN32_THREAD
-	std::vector<TPWorker> workers; // 子线程
+	vector<unique_ptr<TPWorker>> workers; // 子线程
 #endif
+	shared_ptr<TPJob> job;
 #if TP_DEBUG_JOB
-	// 调试用，悬垂引用什么的都不是事
-	std::vector<TPJob> jobs_done;
+	vector<shared_ptr<TPJob>> jobs_done;
 #endif
 
 public:
@@ -440,7 +437,7 @@ TPWorker::~TPWorker()
 		acquire_lock(&lock_job);
 		log_assert(!stoped && "repeate stop");
 		stoped = 1;
-		job = nullptr;
+		job.reset();
 		wake_signal = 1;
 		release_lock(&lock_job);
 		wake_condvar(&cond_job);
@@ -460,19 +457,19 @@ TPWorker::~TPWorker()
 }
 
 
-void TPWorker::assign(TPJob* jptr)
+void TPWorker::assign(shared_ptr<TPJob>& jshr)
 {
 	if (created == 0)
 		return;
-	log_info("worker %d is assigned job %p\n", id, jptr);
 	log_assert(!stoped && "has stoped");
+	log_info("worker %d is assigned job %p\n", id, jshr);
 	acquire_lock(&lock_job);
 	// job may has been finished before `I' wake
 	// log_assert(!job && "in working");
 	// if use shared_ptr<TPJob>, here we can check if job is finished
 	// otherwise this check is done in ~TPJob()
 	// log_assert(!job || job->finished);
-	job = jptr;
+	job = jshr;
 	wake_signal = 1;
 	release_lock(&lock_job);
 	wake_condvar(&cond_job);
@@ -501,14 +498,13 @@ void TPWorker::loop()
 			log_info("worker %d wait (sleep)...\n", id);
 			wait_condvar(&cond_job, &lock_job);
 		}
-		TPJob* jptr = job;
-		job = nullptr;
+		shared_ptr<TPJob> jshr;
+		jshr.swap(job);
 		wake_signal = 0;
 		release_lock(&lock_job);
 
-		if (stoped)
-			break;
-		if (jptr && (atomic_fetch_add(&(jptr->start), 0) < jptr->end))
+		TPJob* jptr = jshr.get();
+		if (!stoped && jptr && (atomic_fetch_add(&(jptr->start), 0) < jptr->end))
 		{
 			int active = atomic_fetch_add(&(jptr->active_count), 1);
 			log_info("worker %d do job %p as %d\n", id, jptr, active);
@@ -532,6 +528,7 @@ void TPWorker::loop()
 		}
 		else
 		{ log_info("worker %d no more jobs\n", id); }
+
 	}
 }
 
@@ -555,7 +552,6 @@ TPImplement::TPImplement(int n)
 	numTrdMax = sysinfo.dwNumberOfProcessors * 2; // 2 for SMT/HT ?
 #endif
 	numThread = 0;
-	// see comment of `TPWorker& operator =(TPWorker&&)'
 	workers.reserve(numTrdMax);
 #if TP_DEBUG_JOB
 	jobs_done.reserve(1024);
@@ -598,9 +594,9 @@ void TPImplement::set(int n)
 		// decrease
 		for (; org > numThread; --org)
 			workers.pop_back();
-		// increase
+		// increase. don't want to depend on C++14 make_unique
 		for (; org < numThread; ++org)
-			workers.emplace_back(this, org);
+			workers.emplace_back(new TPWorker(this, org));
 	}
 	release_lock(&lock_pool);
 }
@@ -618,70 +614,69 @@ int TPImplement::get()
 
 void TPImplement::run(Range const& range, TPLoopBody const& body)
 {
-	if (get() <= 1)
+	if ((get() <= 1) || job)
 	{
 		body(range);
 		return;
 	}
 
 	acquire_lock(&lock_pool);
-	TPJob job(range, body, numThread + 1);
+	std::make_shared<TPJob>(range, body, numThread + 1).swap(job);
 	log_assert(numThread == static_cast<int>(workers.size()));
 	for (int i = 0; i < numThread; ++i)
-		workers[i].assign(&job);
-	job.execute(false);
-	log_assert(atomic_fetch_add(&(job.start), 0) >= range.end);
+		workers[i]->assign(job);
+	job->execute(false);
+	log_assert(atomic_fetch_add(&(job->start), 0) >= range.end);
 	release_lock(&lock_pool);
 
-	int finished = atomic_fetch_add(&(job.finished), 0);
-	int active = atomic_fetch_add(&(job.active_count), 0);
+	int finished = atomic_fetch_add(&(job->finished), 0);
+	int active = atomic_fetch_add(&(job->active_count), 0);
 	// have finished job, or just the main thread is working
 	if (finished || (active == 0))
 	{
 		log_info("TPImplement: no WIP now for job %p active %d\n", &job, active);
-		atomic_exchange(&(job.finished), 1);
-#if TP_DEBUG_JOB
-		jobs_done.push_back(job);
-#endif
-		return;
+		job->finished = 1;
 	}
-
-	log_info("TPImplement: loop (pause) for job %p\n", &job);
-	// don't spin too much in any case (inaccurate getTickCount())
-	for (int i = 0; i < Active_Wait; ++i)
+	else
 	{
-		finished = atomic_fetch_add(&(job.finished), 0);
-		if (finished)
+		log_info("TPImplement: loop (pause) for job %p\n", &job);
+		// don't spin too much in any case (inaccurate getTickCount())
+		for (int i = 0; i < Active_Wait; ++i)
 		{
-			log_info("TPImplement: job %p is finished by others (pause)\n", &job);
-			break;
-		}
-		yield_pause(16);
-	}
-	if (!finished)
-	{
-		log_info("TPImplement: wait (sleep) for job %p\n", &job);
-		acquire_lock(&lock_work);
-		for (;;)
-		{
-			finished = atomic_fetch_add(&(job.finished), 0);
+			finished = atomic_fetch_add(&(job->finished), 0);
 			if (finished)
 			{
-				log_info("TPImplement: job %p is finished by others (wait)\n", &job);
+				log_info("TPImplement: job %p is finished by others (pause)\n", &job);
 				break;
 			}
-			log_info("TPImplement: wait (sleep)...\n");
-			wait_condvar(&cond_work, &lock_work);
-			log_info("TPImplement: wake\n");
+			yield_pause(16);
 		}
-		release_lock(&lock_work);
+		if (!finished)
+		{
+			log_info("TPImplement: wait (sleep) for job %p\n", &job);
+			acquire_lock(&lock_work);
+			for (;;)
+			{
+				finished = atomic_fetch_add(&(job->finished), 0);
+				if (finished)
+				{
+					log_info("TPImplement: job %p is finished by others (wait)\n", &job);
+					break;
+				}
+				log_info("TPImplement: wait (sleep)...\n");
+				wait_condvar(&cond_work, &lock_work);
+				log_info("TPImplement: wake\n");
+			}
+			release_lock(&lock_work);
+		}
 	}
 
-#if TP_DEBUG_JOB
 	acquire_lock(&lock_pool);
+	job.reset();
+#if TP_DEBUG_JOB
 	jobs_done.push_back(job);
-	release_lock(&lock_pool);
 #endif
+	release_lock(&lock_pool);
 }
 
 
