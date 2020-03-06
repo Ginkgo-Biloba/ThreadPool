@@ -26,7 +26,7 @@ IMPORTANT: always use the same order of defines
 	- ref: https://dorodnic.com/blog/2015/10/17/windows-threadpool/
 */
 #ifndef HAVE_PARALLEL_FRAMEWORK
-#  define HAVE_PARALLEL_FRAMEWORK 1
+#  define HAVE_PARALLEL_FRAMEWORK 2
 #endif
 
 #if HAVE_PARALLEL_FRAMEWORK == 0
@@ -192,8 +192,8 @@ public:
 		log_assert(2 <= n);
 		start = range.start; end = range.end;
 		chunk = (end - start + n - 1) / n;
-		// make one task smaller
-		chunk = (chunk + 7) / 8;
+		// make each task smaller
+		chunk = (chunk + 3) / 4;
 		// if log_assert failed, consider scale or offset the range
 		log_assert(static_cast<int64_t>(end) - start < INT_MAX - n);
 		log_assert(static_cast<int64_t>(end) < INT_MAX - n * chunk);
