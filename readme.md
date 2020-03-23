@@ -5,7 +5,7 @@
 因为需要在 Android 上面写 C++，鉴于：
 
 1. NDK Clang 的 `std::thread` 是个残废，并且官方[也不打算修复了](https://github.com/android/ndk/issues/789)。以及里面的 OpenMP 也[有点问题](https://github.com/android/ndk/issues/1028)。
-2. 从 OpenCV 4.2.0 里面抄的 pthreads 线程池[有内存泄漏问题](https://github.com/opencv/opencv/issues/6203)。如果简单地把 `TYPE*` 改为 `unique_ptr<TYPE>` 则程序退出时线程会挂在那里 `join` 不掉。Windows 上的个人遭遇，至今不知道为什么，但是在 Android 上没有这个问题，可能使用的 pthreads_win32 有问题，仅仅是怀疑。
+2. 从 OpenCV 4.2.0 里面抄的 pthreads 线程池[有内存泄漏问题](https://github.com/opencv/opencv/issues/6203)。如果简单地把 `TYPE*` 改为 `unique_ptr<TYPE>` 则程序退出时线程会挂在那里 `join` 不掉。Windows 上的个人遭遇，至今不知道为什么，但是在 Android 上没有这个问题，可能使用的 pthreads-win32 有问题，仅仅是怀疑。
 
 无奈，只能写这个了。
 

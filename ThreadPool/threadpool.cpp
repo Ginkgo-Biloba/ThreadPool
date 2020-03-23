@@ -4,12 +4,12 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
-#include "threadpool.hpp"
 #include "atomicop.hpp"
+#include "common.hpp"
+#include "threadpool.hpp"
 using std::vector;
 using std::shared_ptr;
 using std::unique_ptr;
-using std::make_shared;
 
 /*
 IMPORTANT: always use the same order of defines
@@ -26,7 +26,13 @@ IMPORTANT: always use the same order of defines
 	- ref: https://dorodnic.com/blog/2015/10/17/windows-threadpool/
 */
 #ifndef HAVE_PARALLEL_FRAMEWORK
-#  define HAVE_PARALLEL_FRAMEWORK 2
+#  if defined _MSC_VER && defined _WIN32
+#    define HAVE_PARALLEL_FRAMEWORK 2
+#  elif defined __linux__ || defined __GNUC__
+#    define HAVE_PARALLEL_FRAMEWORK 1
+#  else 
+#    define HAVE_PARALLEL_FRAMEWORK 0
+#  endif
 #endif
 
 #if HAVE_PARALLEL_FRAMEWORK == 0
@@ -69,102 +75,11 @@ IMPORTANT: always use the same order of defines
 #  endif
 #endif
 
-#if defined __i386__ || defined __x86_64__ || defined _M_IX86 || defined _M_X64
-#  include <emmintrin.h> // for _mm_pause
-#endif
-
 
 #if HAVE_PARALLEL_FRAMEWORK
 
 namespace gk
 {
-
-// printf and fprintf is not thread safe in GCC
-void log_printf(bool segsev, char const* fmt, ...)
-{
-	char buf[1 << 14];
-	va_list args;
-	va_start(args, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, args);
-	va_end(args);
-	buf[sizeof(buf) - 1] = 0;
-	if (segsev)
-	{
-		fputs(buf, stderr);
-		fflush(stderr);
-#	if defined __ANDROID__
-		__android_log_print(ANDROID_LOG_ERROR, "gk::log_error", buf);
-#	endif
-#if _HAS_EXCEPTIONS
-		throw buf;
-#else
-		char volatile* p = reinterpret_cast<char*>(0x2b);
-		*p = 0x2b; // 引发异常
-#endif
-	}
-	else
-	{
-		fputs(buf, stdout);
-#	if defined __ANDROID__
-		__android_log_print(ANDROID_LOG_INFO, "gk::log_printf", buf);
-#	endif
-	}
-}
-
-#define log_info(...) //log_printf(false, __VA_ARGS__)
-
-#define log_error(...) log_printf(true, __VA_ARGS__)
-
-#ifdef _MSC_VER
-#  define GK_Func __FUNCTION__
-#elif defined __GNUC__
-#  define GK_Func __PRETTY_FUNCTION__
-#else 
-#  define GK_Func "Can_Not_Get_Func_Name"
-#endif
-
-// expr in C assert evaluated exactly only once ?
-#define log_assert(expr) do \
-	{ \
-		if (!(expr)) \
-			log_printf(true, "log_assert failed: " #expr " in %s, file %s, line %d\n", \
-				GK_Func, __FILE__, __LINE__); \
-	} while(0)
-
-
-// Spin lock's CPU-level yield (required for Hyper-Threading)
-inline void yield_pause(int delay)
-{
-	for (; delay > 0; --delay)
-	{
-#ifdef YIELD_PAUSE
-		YIELD_PAUSE;
-#elif defined __GNUC__ && (defined __i386__ || defined __x86_64__)
-#  if !defined(__SSE2__)
-		__asm__ __volatile__("rep; nop");
-#  else
-		_mm_pause();
-#  endif
-#elif defined __GNUC__ && defined __aarch64__
-		asm volatile("yield" ::: "memory");
-#elif defined __GNUC__ && defined __arm__
-		asm volatile("" ::: "memory");
-# elif defined __GNUC__ && defined __mips__ && __mips_isa_rev >= 2
-		asm volatile("pause" ::: "memory");
-#elif defined __GNUC__ && defined __PPC64__
-		asm volatile("or 27,27,27" ::: "memory");
-#elif defined _MSC_VER && (defined _M_IX86 || defined _M_X64)
-		_mm_pause();
-#elif defined _MSC_VER && (defined _M_ARM || defined M_ARM64)
-		__nop();
-#else
-		#warning "can't detect `pause' (CPU-yield) instruction on the target platform, \
-		specify YIELD_PAUSE definition via compiler flags"
-# endif
-	}
-}
-
-
 //////////////////// TPJob ////////////////////
 
 class TPJob
@@ -195,16 +110,18 @@ public:
 		// make each task smaller
 		chunk = (chunk + 3) / 4;
 		// if log_assert failed, consider scale or offset the range
-		log_assert(static_cast<int64_t>(end) - start < INT_MAX - n);
-		log_assert(static_cast<int64_t>(end) < INT_MAX - n * chunk);
+		int64_t n64 = n;
+		log_assert(end < INT_MAX - n64 + start);
+		log_assert(end < INT_MAX - n64 * chunk);
 		finished = completed_count = active_count = 0;
+		dummy0[0] = dummy1[0] = dummy2[0] = 0;
 		log_info("job %p has been created (%d, %d)\n", this, start, end);
 	}
 
 	~TPJob()
 	{
-		log_assert(atomic_fetch_add(&finished, 0));
-		log_assert(atomic_fetch_add(&start, 0) >= end);
+		log_assert(atomic_load(&finished));
+		log_assert(atomic_load(&start) >= end);
 		log_info("job %p has been finished\n", this);
 	}
 
@@ -221,7 +138,7 @@ public:
 			task += (R.end - R.start);
 			body(R);
 		}
-		int fin = atomic_fetch_add(&finished, 0);
+		int fin = atomic_load(&finished);
 		if (spawned && fin)
 		{
 			log_error("xxxxx BUG xxxxxx\n\tjob %p %d, %d, %d\n",
@@ -462,13 +379,12 @@ void TPWorker::assign(shared_ptr<TPJob>& jshr)
 	if (created == 0)
 		return;
 	log_assert(!stoped && "has stoped");
-	log_info("worker %d is assigned job %p\n", id, jshr);
+	log_info("worker %d is assigned job %p\n", id, jshr.operator*());
 	acquire_lock(&lock_job);
-	// job may has been finished before `I' wake
+	// job may have been finished before `I' wake
 	// log_assert(!job && "in working");
-	// if use shared_ptr<TPJob>, here we can check if job is finished
-	// otherwise this check is done in ~TPJob()
-	// log_assert(!job || job->finished);
+	// make sure that previous job is finished
+	log_assert(!job || job->finished);
 	job = jshr;
 	wake_signal = 1;
 	release_lock(&lock_job);
@@ -487,7 +403,7 @@ void TPWorker::loop()
 		log_info("worker %d loop (pause)...\n", id);
 		for (int i = 0; i < Active_Wait; ++i)
 		{
-			if (atomic_fetch_add(&wake_signal, 0))
+			if (atomic_load(&wake_signal))
 				break;
 			yield_pause(16);
 		}
@@ -504,14 +420,14 @@ void TPWorker::loop()
 		release_lock(&lock_job);
 
 		TPJob* jptr = jshr.get();
-		if (!stoped && jptr && (atomic_fetch_add(&(jptr->start), 0) < jptr->end))
+		if (!stoped && jptr && (atomic_load(&(jptr->start)) < jptr->end))
 		{
 			int active = atomic_fetch_add(&(jptr->active_count), 1);
 			log_info("worker %d do job %p as %d\n", id, jptr, active);
 			jptr->execute(true);
 
 			int completed = atomic_fetch_add(&(jptr->completed_count), 1) + 1;
-			active = atomic_fetch_add(&(jptr->active_count), 0);
+			active = atomic_load(&(jptr->active_count));
 			if (active == completed)
 			{
 				// finished (marked by others) before `I' mark it ?
@@ -623,14 +539,16 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	acquire_lock(&lock_pool);
 	std::make_shared<TPJob>(range, body, numThread + 1).swap(job);
 	log_assert(numThread == static_cast<int>(workers.size()));
-	for (int i = 0; i < numThread; ++i)
+
+	int spawn = std::min(numThread, (job->end - job->start) / job->chunk);
+	for (int i = 0; i < spawn; ++i)
 		workers[i]->assign(job);
 	job->execute(false);
-	log_assert(atomic_fetch_add(&(job->start), 0) >= range.end);
+	log_assert(atomic_load(&(job->start)) >= range.end);
 	release_lock(&lock_pool);
 
-	int finished = atomic_fetch_add(&(job->finished), 0);
-	int active = atomic_fetch_add(&(job->active_count), 0);
+	int finished = atomic_load(&(job->finished));
+	int active = atomic_load(&(job->active_count));
 	// have finished job, or just the main thread is working
 	if (finished || (active == 0))
 	{
@@ -643,7 +561,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 		// don't spin too much in any case (inaccurate getTickCount())
 		for (int i = 0; i < Active_Wait; ++i)
 		{
-			finished = atomic_fetch_add(&(job->finished), 0);
+			finished = atomic_load(&(job->finished));
 			if (finished)
 			{
 				log_info("TPImplement: job %p is finished by others (pause)\n", &job);
@@ -657,7 +575,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 			acquire_lock(&lock_work);
 			for (;;)
 			{
-				finished = atomic_fetch_add(&(job->finished), 0);
+				finished = atomic_load(&(job->finished));
 				if (finished)
 				{
 					log_info("TPImplement: job %p is finished by others (wait)\n", &job);
@@ -687,7 +605,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 static VOID CALLBACK TPJob_Func(PTP_CALLBACK_INSTANCE, PVOID vp_job, PTP_WORK)
 {
 	TPJob* job = static_cast<TPJob*>(vp_job);
-	if (atomic_fetch_add(&(job->start), 0) < job->end)
+	if (atomic_load(&(job->start)) < job->end)
 		job->execute(true);
 }
 
@@ -734,7 +652,7 @@ TPImplement::~TPImplement()
 {
 	// Wait for any previously scheduled tasks to complete, but stop accepting new ones
 	CloseThreadpoolCleanupGroupMembers(clnup, FALSE, NULL);
-	// Clean-up resources:
+	// Clean-up resources
 	CloseThreadpoolCleanupGroup(clnup);
 	DestroyThreadpoolEnvironment(&envir);
 	CloseThreadpool(pool);
@@ -797,7 +715,6 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	} while (0);
 	ReleaseSRWLockExclusive(&lock_pool);
 }
-
 
 #endif
 

@@ -4,7 +4,7 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "compile",
+			"label": "thread",
 			"type": "process",
 			"command": "${env:mingw}/bin/g++.exe",
 			"args": [
@@ -18,9 +18,9 @@
 				"-Wpointer-arith",
 				"-Wshadow",
 				// "-fsanitize=undefined",
-				"-g",
-				// "-O2",
-				"-msse2",
+				// "-g",
+				"-O2",
+				"-msse4.2",
 				"ThreadPool/main.cpp",
 				"ThreadPool/threadpool.cpp",
 				"-o",
