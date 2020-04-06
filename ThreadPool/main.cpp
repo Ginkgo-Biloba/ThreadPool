@@ -62,18 +62,18 @@ public:
 		for (int h = range.start; h < range.end; ++h)
 		{
 			uchar* M = m.data + h * cols;
-			double Y = y0 + h * ppi;
+			double Y0 = y0 + h * ppi;
 			for (int w = 0; w < cols; ++w)
 			{
-				double X = x0 + w * ppi;
+				double X0 = x0 + w * ppi;
 				double x = 0, y = 0, t;
 				double z = x * x + y * y;
 				int iter = 0;
 				while (z < 4 && iter < Iteration)
 				{
 					++iter;
-					t = x * x - y * y + X;
-					y = 2 * x * y + Y;
+					t = x * x - y * y + X0;
+					y = 2 * x * y + Y0;
 					x = t;
 					z = x * x + y * y;
 				}

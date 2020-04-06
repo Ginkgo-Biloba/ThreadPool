@@ -1,6 +1,4 @@
 ﻿#include <algorithm>
-#include <cstdarg>
-#include <cstdio>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -88,7 +86,7 @@ class TPJob
 
 public:
 	int start, end;
-	int chunk;
+	int nstripe;
 	int64_t dummy0[8];
 
 	// number of threads worked on this job
@@ -106,13 +104,12 @@ public:
 	{
 		log_assert(2 <= n);
 		start = range.start; end = range.end;
-		chunk = (end - start + n - 1) / n;
-		// make each task smaller
-		chunk = (chunk + 3) / 4;
+		nstripe = std::min(32, n * 2);
+		int64_t stripe = static_cast<int64_t>(range.end);
+		stripe = (stripe - range.start) / nstripe;
 		// if log_assert failed, consider scale or offset the range
-		int64_t n64 = n;
-		log_assert(end < INT_MAX - n64 + start);
-		log_assert(end < INT_MAX - n64 * chunk);
+		log_assert(end < INT_MAX - stripe + start);
+		log_assert(end < INT_MAX - stripe * n);
 		finished = completed_count = active_count = 0;
 		dummy0[0] = dummy1[0] = dummy2[0] = 0;
 		log_info("job %p has been created (%d, %d)\n", this, start, end);
@@ -127,15 +124,17 @@ public:
 
 	int execute(bool spawned)
 	{
-		int task = 0;
+		int sumt = 0, task;
 		Range R;
 		for (;;)
 		{
-			R.start = atomic_fetch_add(&start, chunk);
+			task = atomic_load(&start);
+			task = std::max((end - task) / nstripe, 1);
+			R.start = atomic_fetch_add(&start, task);
 			if (R.start >= end)
 				break;
-			R.end = std::min(R.start + chunk, end);
-			task += (R.end - R.start);
+			R.end = std::min(R.start + task, end);
+			sumt += (R.end - R.start);
 			body(R);
 		}
 		int fin = atomic_load(&finished);
@@ -144,7 +143,7 @@ public:
 			log_error("xxxxx BUG xxxxxx\n\tjob %p %d, %d, %d\n",
 				this, R.start, active_count, completed_count);
 		}
-		return task;
+		return sumt;
 	}
 };
 
@@ -376,7 +375,7 @@ TPWorker::~TPWorker()
 
 void TPWorker::assign(shared_ptr<TPJob>& jshr)
 {
-	if (created == 0)
+	if (!created)
 		return;
 	log_assert(!stoped && "has stoped");
 	log_info("worker %d is assigned job %p\n", id, jshr.operator*());
@@ -537,10 +536,9 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	}
 
 	acquire_lock(&lock_pool);
-	std::make_shared<TPJob>(range, body, numThread + 1).swap(job);
+	job = std::make_shared<TPJob>(range, body, numThread + 1);
 	log_assert(numThread == static_cast<int>(workers.size()));
-
-	int spawn = std::min(numThread, (job->end - job->start) / job->chunk);
+	int spawn = std::min(numThread, range.end - range.start);
 	for (int i = 0; i < spawn; ++i)
 		workers[i]->assign(job);
 	job->execute(false);
@@ -590,10 +588,10 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	}
 
 	acquire_lock(&lock_pool);
-	job.reset();
 #if TP_DEBUG_JOB
 	jobs_done.push_back(job);
 #endif
+	job.reset();
 	release_lock(&lock_pool);
 }
 

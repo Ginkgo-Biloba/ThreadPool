@@ -46,13 +46,13 @@ public:
 	do not call it when working */
 	void set(int num_thread);
 
-	/* get the number of threads, including the main thread */
+	/* get the number of threads, including the main thread. */
 	int get() const;
 
-	/* need `start < end'
-	consider scale range if it is too long
-	negative in TPLoopBody::operator() if need start > end
-	usepar 可以用来运行时切换实际使用多线程的嵌套等级 */
+	/* need `start < end'.
+	consider scale range if it is too long.
+	negative in TPLoopBody::operator() if need start > end.
+	use `usepar' to control the actual nested level of parallel */
 	void run(Range const& range, TPLoopBody const& body, bool usepar = true) const;
 };
 
