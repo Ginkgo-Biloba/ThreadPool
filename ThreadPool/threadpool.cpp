@@ -352,8 +352,8 @@ TPWorker::~TPWorker()
 	{
 		acquire_lock(&lock_job);
 		log_assert(!stoped && "repeate stop");
-		stoped = 1;
 		job.reset();
+		stoped = 1;
 		wake_signal = 1;
 		release_lock(&lock_job);
 		wake_condvar(&cond_job);
@@ -370,6 +370,7 @@ TPWorker::~TPWorker()
 #elif defined HAVE_WIN32_THREAD
 	// nothing to do with SRWLOCK and CONDITION_VARIABLE	
 #endif
+	log_info("TPWork: worker %d has stoped\n", id);
 }
 
 
@@ -509,9 +510,9 @@ void TPImplement::set(int n)
 		// decrease
 		for (; org > numThread; --org)
 			workers.pop_back();
-		// increase. don't want to depend on C++14 make_unique
+		// increase. make_unique requires C++ 14
 		for (; org < numThread; ++org)
-			workers.emplace_back(new TPWorker(this, org));
+			workers.emplace_back(new TPWorker(this, org + 1));
 	}
 	release_lock(&lock_pool);
 }
@@ -529,16 +530,16 @@ int TPImplement::get()
 
 void TPImplement::run(Range const& range, TPLoopBody const& body)
 {
-	if ((get() <= 1) || job)
+	if (job || (numThread == 0))
 	{
 		body(range);
 		return;
 	}
 
 	acquire_lock(&lock_pool);
-	job = std::make_shared<TPJob>(range, body, numThread + 1);
 	log_assert(numThread == static_cast<int>(workers.size()));
-	int spawn = std::min(numThread, range.end - range.start);
+	job = std::make_shared<TPJob>(range, body, numThread + 1);
+	int spawn = std::min(numThread, range.end - range.start - 1);
 	for (int i = 0; i < spawn; ++i)
 		workers[i]->assign(job);
 	job->execute(false);
@@ -804,26 +805,5 @@ void ThreadPool::run(Range const& range, TPLoopBody const& body, bool usepar) co
 #endif
 }
 
-
-static ThreadPool sgThreadPool;
 }
 
-//////////////////// 函数 ////////////////////
-
-namespace gk
-{
-void set_num_thread(int n)
-{
-	sgThreadPool.set(n);
-}
-
-int get_num_thread()
-{
-	return sgThreadPool.get();
-}
-
-void parallel_for(Range const& range, TPLoopBody const& body, bool usepar)
-{
-	sgThreadPool.run(range, body, usepar);
-}
-}

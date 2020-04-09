@@ -10,6 +10,8 @@ using namespace gk;
 
 typedef unsigned char uchar;
 
+static int save_pgm = 0;
+
 class Mat
 {
 public:
@@ -103,32 +105,36 @@ bool pgm_write(Mat const& img, char const* name)
 }
 
 
-void draw(double ox, double oy, double radius, int size)
+void draw(double ox, double oy, double radius, int size, 
+	ThreadPool const& pool)
 {
 	Mat img(size, size);
 	char buf[1 << 10];
-	parallel_for(Range(0, size), Mandelbrot(img, ox, oy, radius), true);
+	pool.run(Range(0, size), Mandelbrot(img, ox, oy, radius), true);
 	sprintf(buf, "G:/Sample/mandelbrot_%f.pgm", radius);
-	pgm_write(img, buf);
+	if (save_pgm)
+		pgm_write(img, buf);
 }
 
 
-int main()
+int main(int argc, char**)
 {
-	int nums[6] = { 0, 1, 2, 5, 3, 6 };
+	if (argc > 1)
+		save_pgm = 1;
+	double sum_tick = clock();
+	ThreadPool pool;
+	int nums[6] = { 0, 4, 2, 5, 3, 6 };
 	for (size_t i = 0; i < 6; ++i)
-		set_num_thread(nums[i]);
-
-	clock_t t0 = clock();
+		pool.set(nums[i]);
 	int size = 1000;
 	double x = 0.27322626, y = 0.595153338;
-	draw(-0.75, 0, 1.5, size);
+	draw(-0.75, 0, 1.5, size, pool);
 	for (int i = 2; i < 7; ++i)
-		draw(x, y, pow(0.2, i - 1), size);
-	clock_t t1 = clock();
+		draw(x, y, pow(0.2, i - 1), size, pool);
+	sum_tick = clock() - sum_tick;
 
-	printf("Hello, World! %d, %f ms\n",
-		get_num_thread(), 1e3 * (t1 - t0) / CLOCKS_PER_SEC);
+	printf("Hello, World! %d, %f ms\n", 
+		pool.get(), sum_tick * 1e3 / CLOCKS_PER_SEC);
 	return 0;
 }
 

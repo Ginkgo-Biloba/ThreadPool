@@ -6,6 +6,10 @@
 #  define GK_M_X64 0
 #endif
 
+#if defined __i386__ || defined __x86_64__ || defined _M_IX86 || defined _M_X64
+#  include <emmintrin.h> // for _mm_pause
+#endif
+
 static_assert(
 	sizeof(char) == 1 && sizeof(short) == 2 &&
 	sizeof(int) == 4 && sizeof(long long) == 8,
@@ -215,10 +219,9 @@ GK_Atomic_CAS_Op(long long, compare_exchange, val_compare_and_swap)
 #endif
 
 
-// for convenience
-
 namespace gk
 {
+// for convenience
 #define GK_Atomic_Load(type)          \
 inline type atomic_load(type* ptr)    \
 {                                     \
@@ -228,7 +231,43 @@ inline type atomic_load(type* ptr)    \
 GK_Atomic_Load(char)
 GK_Atomic_Load(short)
 GK_Atomic_Load(int)
+#if GK_M_X64
 GK_Atomic_Load(long long)
-
+#endif
 #undef GK_Atomic_Load
+
+
+// Spin lock's CPU-level yield (required for Hyper-Threading)
+inline void yield_pause(int delay)
+{
+	for (; delay > 0; --delay)
+	{
+#ifdef YIELD_PAUSE
+		YIELD_PAUSE;
+#elif defined __GNUC__ && (defined __i386__ || defined __x86_64__)
+#  if !defined(__SSE2__)
+		__asm__ __volatile__("rep; nop");
+#  else
+		_mm_pause();
+#  endif
+#elif defined __GNUC__ && defined __aarch64__
+		__asm__ __volatile__("yield" ::: "memory");
+#elif defined __GNUC__ && defined __arm__
+		__asm__ __volatile__("" ::: "memory");
+# elif defined __GNUC__ && defined __mips__ && __mips_isa_rev >= 2
+		__asm__ __volatile__("pause" ::: "memory");
+#elif defined __GNUC__ && defined __PPC64__
+		__asm__ __volatile__("or 27,27,27" ::: "memory");
+#elif defined _MSC_VER && (defined _M_IX86 || defined _M_X64)
+		_mm_pause();
+#elif defined _MSC_VER && (defined _M_ARM || defined M_ARM64)
+		__nop();
+#else
+		(void)(delay);
+		#warning "can't detect `pause' (CPU-yield) instruction on the target platform, \
+		specify YIELD_PAUSE definition via compiler flags"
+# endif
+	}
+}
+
 }

@@ -56,12 +56,5 @@ public:
 	void run(Range const& range, TPLoopBody const& body, bool usepar = true) const;
 };
 
-/* 方便而已。转发到全局静态线程池调用 */
-
-void set_num_thread(int n);
-
-int get_num_thread();
-
-void parallel_for(Range const& range, TPLoopBody const& body, bool usepar = true);
 }
 

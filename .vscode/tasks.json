@@ -4,7 +4,7 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "thread",
+			"label": "x64_release",
 			"type": "process",
 			"command": "${env:mingw}/bin/g++.exe",
 			"args": [
@@ -20,11 +20,11 @@
 				// "-fsanitize=undefined",
 				// "-g",
 				"-O2",
-				"-msse4.2",
-				"ThreadPool/main.cpp",
-				"ThreadPool/threadpool.cpp",
 				"-o",
-				"x64_Debug/main.exe",
+				"x64_Release\\main.exe",
+				"-msse4.2",
+				"ThreadPool\\main.cpp",
+				"ThreadPool\\threadpool.cpp",
 			],
 			"group": {
 				"kind": "build",
