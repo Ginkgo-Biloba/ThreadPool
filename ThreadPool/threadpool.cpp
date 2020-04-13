@@ -209,8 +209,8 @@ class TPImplement
 	int numTrdMax, numThread;
 #if defined HAVE_PTHREADS_PF || defined HAVE_WIN32_THREAD
 	vector<unique_ptr<TPWorker>> workers; // 子线程
-#endif
 	shared_ptr<TPJob> job;
+#endif
 #if TP_DEBUG_JOB
 	vector<shared_ptr<TPJob>> jobs_done;
 #endif
