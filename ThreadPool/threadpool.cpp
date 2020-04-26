@@ -51,6 +51,9 @@ IMPORTANT: always use the same order of defines
 #if defined HAVE_PTHREADS_PF
 #  include <pthread.h>
 #elif defined HAVE_WIN32_THREAD || defined HAVE_WIN32_POOL
+#  define WIN32_LEAN_AND_MEAN
+#  define NOCOMM
+#  define NOMINMAX
 #  include <Windows.h>
 #  ifdef HAVE_WIN32_THREAD
 #    include <process.h>
@@ -733,6 +736,7 @@ ThreadPool::ThreadPool(int n)
 	impl = new details::TPImplement(n);
 #else 
 	impl = nullptr;
+	(void)(n);
 #endif
 	nestedbuf = 0;
 	nestedptr = &nestedbuf;
