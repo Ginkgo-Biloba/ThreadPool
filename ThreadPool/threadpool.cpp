@@ -335,10 +335,10 @@ TPWorker::TPWorker(TPImplement* p, int i)
 	InitializeConditionVariable(&cond_job);
 	// for initialize CRT runtime, not use CreateThread
 	win32_thread = _beginthreadex(NULL, 0, TPWorker_Func, this, 0, &win32_id);
-	err = GetLastError();
-	if ((win32_thread == 0) || (err != ERROR_SUCCESS))
+	if (win32_thread == 0)
 	{
-		log_info("worker %d can not create mutex, "
+		err = GetLastError();
+		log_info("worker %d can not create thread, "
 			"handle = %zx, win32_id = %u, err = %x\n",
 			id, static_cast<size_t>(win32_thread), win32_id, err);
 		return;
@@ -622,12 +622,12 @@ TPImplement::TPImplement(int n)
 		log_error("TPImplement: CreateThreadpool failed, err = %d\n", err);
 		return;
 	}
-	if (SetThreadpoolThreadMinimum(pool, 1) != TRUE)
+	/*if (SetThreadpoolThreadMinimum(pool, 1) != TRUE)
 	{
 		err = GetLastError();
 		log_error("TPImplement: SetThreadpoolThreadMinimum failed, err = %d\n", err);
 		return;
-	}
+	}*/
 
 	InitializeThreadpoolEnvironment(&envir);
 	SetThreadpoolCallbackPool(&envir, pool);
@@ -699,7 +699,8 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 		TP_WORK* work = CreateThreadpoolWork(TPJob_Func, &job, &envir);
 		if (work == NULL)
 		{
-			log_error("TPImplement: CreateThreadpoolWork failed, err = %d", GetLastError());
+			log_error("TPImplement: CreateThreadpoolWork failed, err = %d",
+				static_cast<int>(GetLastError()));
 			// try or not?
 			body(range);
 			job.finished = 1;

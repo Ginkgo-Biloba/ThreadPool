@@ -121,6 +121,7 @@ int main(int argc, char**)
 {
 	if (argc > 1)
 		save_pgm = 1;
+	puts("├Hello, World┤");
 	double sum_tick = clock();
 	ThreadPool pool;
 	int nums[6] = { 0, 4, 2, 5, 3, 6 };
@@ -133,8 +134,8 @@ int main(int argc, char**)
 		draw(x, y, pow(0.2, i - 1), size, pool);
 	sum_tick = clock() - sum_tick;
 
-	printf("Hello, World! %d, %f ms\n", 
-		pool.get(), sum_tick * 1e3 / CLOCKS_PER_SEC);
+	printf("%d, %f ms\n", pool.get(), 
+		sum_tick * 1e3 / CLOCKS_PER_SEC);
 	return 0;
 }
 
