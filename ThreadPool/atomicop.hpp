@@ -13,9 +13,9 @@
 static_assert(
 	sizeof(char) == 1 && sizeof(short) == 2 &&
 	sizeof(int) == 4 && sizeof(long long) == 8,
-	"size_required");
+	"size required");
 
-// prefer to use int, because I have not used/tested others ...
+// prefer to use `int'. I have not used/tested others ...
 
 #if defined _MSC_VER
 
@@ -221,6 +221,47 @@ GK_Atomic_CAS_Op(long long, compare_exchange, val_compare_and_swap)
 
 namespace gk
 {
+#define GK_Unsiged2Sigend_Bin(op, utype, stype)                 \
+inline utype atomic_##op(utype* ptr, utype val)                 \
+{                                                               \
+	return static_cast<utype>(atomic_##op(                        \
+		reinterpret_cast<stype*>(ptr), static_cast<stype>(val)));   \
+}
+
+#define GK_Unsigned2Signed(utype, stype)                        \
+GK_Unsiged2Sigend_Bin(fetch_add, utype, stype)                  \
+GK_Unsiged2Sigend_Bin(fetch_and, utype, stype)                  \
+GK_Unsiged2Sigend_Bin(fetch_xor, utype, stype)                  \
+GK_Unsiged2Sigend_Bin(fetch_or, utype, stype)                   \
+GK_Unsiged2Sigend_Bin(exchange, utype, stype)                   \
+inline utype atomic_compare_exchange(utype* ptr,                \
+	utype comparand, utype exchange)                              \
+{                                                               \
+	return static_cast<utype>(                                    \
+		atomic_compare_exchange(                                    \
+			reinterpret_cast<stype*>(ptr),                            \
+			static_cast<stype>(comparand),                            \
+			static_cast<stype>(exchange)                              \
+		));                                                         \
+}
+
+GK_Unsigned2Signed(unsigned char, char)
+GK_Unsigned2Signed(signed char, char)
+GK_Unsigned2Signed(unsigned short, short)
+GK_Unsigned2Signed(unsigned, int)
+
+#if GK_M_X64
+GK_Unsigned2Signed(unsigned long long, long long);
+#endif
+}
+
+
+#undef GK_Unsigned2Signed
+#undef GK_Unsiged2Sigend_Bin
+
+
+namespace gk
+{
 // for convenience
 #define GK_Atomic_Load(type)          \
 inline type atomic_load(type* ptr)    \
@@ -229,11 +270,17 @@ inline type atomic_load(type* ptr)    \
 }
 
 GK_Atomic_Load(char)
+GK_Atomic_Load(unsigned char)
+GK_Atomic_Load(signed char)
 GK_Atomic_Load(short)
+GK_Atomic_Load(unsigned short)
 GK_Atomic_Load(int)
+GK_Atomic_Load(unsigned)
 #if GK_M_X64
 GK_Atomic_Load(long long)
+GK_Atomic_Load(unsigned long long)
 #endif
+
 #undef GK_Atomic_Load
 
 
@@ -267,7 +314,7 @@ inline void yield_pause(int delay)
 		#warning "can't detect `pause' (CPU-yield) instruction on the target platform, \
 		specify YIELD_PAUSE definition via compiler flags"
 # endif
-	}
+}
 }
 
 }

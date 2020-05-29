@@ -107,7 +107,8 @@ public:
 	{
 		log_assert(2 <= n);
 		start = range.start; end = range.end;
-		nstripe = std::min(32, n * 2);
+		// adjust strie number depend on the specific work
+		nstripe = std::min(std::max(n * 2, 8), 64);
 		int64_t stripe = static_cast<int64_t>(range.end);
 		stripe = (stripe - range.start) / nstripe;
 		// if log_assert failed, consider scale or offset the range
@@ -524,9 +525,12 @@ void TPImplement::set(int n)
 int TPImplement::get()
 {
 	int n = 1;
-	acquire_lock(&lock_pool);
-	n = numThread + 1;
-	release_lock(&lock_pool);
+	// do we really need lock ?
+	// if so, we can not get() when work, otherwise it will deadlock(s)
+	// acquire_lock(&lock_pool);
+	// n = numThread + 1;
+	// release_lock(&lock_pool);
+	n = atomic_load(&numThread) + 1;
 	return n;
 }
 
@@ -554,7 +558,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	// have finished job, or just the main thread is working
 	if (finished || (active == 0))
 	{
-		log_info("TPImplement: no WIP now for job %p active %d\n", &job, active);
+		log_info("TPImplement: no worker in progress for job %p active %d\n", &job, active);
 		job->finished = 1;
 	}
 	else
@@ -603,7 +607,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 #elif defined HAVE_WIN32_POOL
 
 
-// no need to introduce instance and worker
+// no need to use PTP_CALLBACK_INSTANCE and PTP_WORK
 static VOID CALLBACK TPJob_Func(PTP_CALLBACK_INSTANCE, PVOID vp_job, PTP_WORK)
 {
 	TPJob* job = static_cast<TPJob*>(vp_job);
@@ -792,16 +796,16 @@ void ThreadPool::run(Range const& range, TPLoopBody const& body, bool usepar) co
 #if HAVE_PARALLEL_FRAMEWORK
 
 	int depth = atomic_fetch_add(nestedptr, 1);
-	do
+	if (depth != 0)
 	{
-		if (depth != 0)
-		{
-			body(range);
-			break;
-		}
+		atomic_fetch_add(nestedptr, -1);
+		body(range);
+	}
+	else
+	{
 		impl->run(range, body);
-	} while (0);
-	atomic_fetch_add(nestedptr, -1);
+		atomic_fetch_add(nestedptr, -1);
+	}
 
 #else 
 
