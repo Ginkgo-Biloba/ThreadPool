@@ -13,7 +13,7 @@ struct Range
 class TPLoopBody
 {
 public:
-	virtual void operator ()(Range const& range) const = 0;
+	virtual void operator ()(Range const& range) = 0;
 	virtual ~TPLoopBody() {};
 };
 
@@ -30,15 +30,15 @@ class ThreadPool
 
 	/* 与 OpenCV 一样，简单起见，不支持超嵌套，同时只运行一项任务
 	指针是为了能在 run 函数里面改变值 */
-	int nestedbuf; int* nestedptr;
+	int nested;
 
 	ThreadPool(ThreadPool const&) = delete;
 	ThreadPool& operator =(ThreadPool const&) = delete;
 
-public:
-	ThreadPool(ThreadPool&&) = default;
-	ThreadPool& operator =(ThreadPool&&) = default;
+	ThreadPool(ThreadPool&&) = delete;
+	ThreadPool& operator =(ThreadPool&&) = delete;
 
+public:
 	ThreadPool(int num_thread = -1);
 	~ThreadPool();
 
@@ -47,13 +47,17 @@ public:
 	void set(int num_thread);
 
 	/* get the number of threads, including the main thread. */
-	int get() const;
+	int get();
 
 	/* need `start < end'.
 	consider scale range if it is too long.
 	negative in TPLoopBody::operator() if need start > end.
 	use `usepar' to control the actual nested level of parallel */
-	void run(Range const& range, TPLoopBody const& body, bool usepar = true) const;
+	void run(Range const& range, TPLoopBody& body, bool usepar = true);
+
+	/* not limit to const body, for convenience */
+	void run(Range const& range, TPLoopBody&& body, bool usepar = true)
+	{ run(range, body, usepar); }
 };
 
 }

@@ -59,7 +59,7 @@ public:
 	}
 
 	// per-row
-	void operator ()(Range const& range) const override
+	void operator ()(Range const& range) override
 	{
 		for (int h = range.start; h < range.end; ++h)
 		{
@@ -105,8 +105,7 @@ bool pgm_write(Mat const& img, char const* name)
 }
 
 
-void draw(double ox, double oy, double radius, int size, 
-	ThreadPool const& pool)
+void draw(double ox, double oy, double radius, int size, ThreadPool& pool)
 {
 	Mat img(size, size);
 	char buf[1 << 10];
@@ -124,7 +123,7 @@ int main(int argc, char**)
 	puts("├Hello, World┤");
 	double sum_tick = clock();
 	ThreadPool pool;
-	int nums[6] = { 0, 4, 2, 5, 3, 6 };
+	int nums[6] = { 0, 4, 2, 6, 3, 5 };
 	for (size_t i = 0; i < 6; ++i)
 		pool.set(nums[i]);
 	int size = 1000;

@@ -85,7 +85,7 @@ namespace gk
 
 class TPJob
 {
-	TPLoopBody const& body;
+	TPLoopBody& body;
 
 public:
 	int start, end;
@@ -102,7 +102,7 @@ public:
 
 	int finished;
 
-	TPJob(Range const& range, TPLoopBody const& b, int n)
+	TPJob(Range const& range, TPLoopBody& b, int n)
 		: body(b), start(range.start), end(range.end)
 	{
 		log_assert(2 <= n);
@@ -209,8 +209,8 @@ class TPImplement
 
 	enum { Active_Wait = 10240 };
 
-	// numThread 是子线程的数量
-	int numTrdMax, numThread;
+	// num_child 是子线程的数量
+	int max_child, num_child;
 #if defined HAVE_PTHREADS_PF || defined HAVE_WIN32_THREAD
 	vector<unique_ptr<TPWorker>> workers; // 子线程
 	shared_ptr<TPJob> job;
@@ -239,7 +239,7 @@ public:
 	~TPImplement();
 	void set(int n);
 	int get();
-	void run(Range const& range, TPLoopBody const& body);
+	void run(Range const& range, TPLoopBody& body);
 };
 
 //////////////////// Implement ////////////////////
@@ -462,17 +462,17 @@ TPImplement::TPImplement(int n)
 	err |= pthread_mutex_init(&lock_work, NULL);
 	err |= pthread_cond_init(&cond_work, NULL);
 	log_assert(!err && "failed to initialize TPImplement (pthreads)");
-	numTrdMax = pthread_num_processors_np() * 2; // not too much
+	max_child = pthread_num_processors_np() * 2; // not too much
 #elif defined HAVE_WIN32_THREAD
 	InitializeSRWLock(&lock_pool);
 	InitializeSRWLock(&lock_work);
 	InitializeConditionVariable(&cond_work);
 	SYSTEM_INFO sysinfo;
 	GetSystemInfo(&sysinfo);
-	numTrdMax = sysinfo.dwNumberOfProcessors * 2; // 2 for SMT/HT ?
+	max_child = sysinfo.dwNumberOfProcessors * 2; // 2 for SMT/HT ?
 #endif
-	numThread = 0;
-	workers.reserve(numTrdMax);
+	num_child = 0;
+	workers.reserve(max_child);
 #if TP_DEBUG_JOB
 	jobs_done.reserve(1024);
 #endif
@@ -499,23 +499,23 @@ TPImplement::~TPImplement()
 void TPImplement::set(int n)
 {
 	acquire_lock(&lock_pool);
-	numThread = n;
-	if (numThread < 0)
-		numThread = numTrdMax / 2;
-	numThread = std::min(std::max(numThread - 1, 0), numTrdMax);
-	if (numThread > 0)
+	num_child = n;
+	if (num_child < 0)
+		num_child = max_child / 2;
+	num_child = std::min(std::max(num_child - 1, 0), max_child);
+	if (num_child > 0)
 	{
 		int org = static_cast<int>(workers.size());
-		if (org != numThread)
+		if (org != num_child)
 		{
 			log_info("TPImplement: change the number of workers %d -> %d\n",
-				org, numThread);
+				org, num_child);
 		}
 		// decrease
-		for (; org > numThread; --org)
+		for (; org > num_child; --org)
 			workers.pop_back();
 		// increase. make_unique requires C++ 14
-		for (; org < numThread; ++org)
+		for (; org < num_child; ++org)
 			workers.emplace_back(new TPWorker(this, org + 1));
 	}
 	release_lock(&lock_pool);
@@ -526,27 +526,27 @@ int TPImplement::get()
 {
 	int n = 1;
 	// do we really need lock ?
-	// if so, we can not get() when work, otherwise it will deadlock(s)
+	// if so, we can not get() when work, otherwise it will deadlock
 	// acquire_lock(&lock_pool);
-	// n = numThread + 1;
+	// n = num_child + 1;
 	// release_lock(&lock_pool);
-	n = atomic_load(&numThread) + 1;
+	n = atomic_load(&num_child) + 1;
 	return n;
 }
 
 
-void TPImplement::run(Range const& range, TPLoopBody const& body)
+void TPImplement::run(Range const& range, TPLoopBody& body)
 {
-	if (job || (numThread == 0))
+	if (job || (num_child == 0))
 	{
 		body(range);
 		return;
 	}
 
 	acquire_lock(&lock_pool);
-	log_assert(numThread == static_cast<int>(workers.size()));
-	job = std::make_shared<TPJob>(range, body, numThread + 1);
-	int spawn = std::min(numThread, range.end - range.start - 1);
+	log_assert(num_child == static_cast<int>(workers.size()));
+	job = std::make_shared<TPJob>(range, body, num_child + 1);
+	int spawn = std::min(num_child, range.end - range.start - 1);
 	for (int i = 0; i < spawn; ++i)
 		workers[i]->assign(job);
 	job->execute(false);
@@ -648,8 +648,8 @@ TPImplement::TPImplement(int n)
 	InitializeSRWLock(&lock_pool);
 	SYSTEM_INFO sysinfo;
 	GetSystemInfo(&sysinfo);
-	numTrdMax = sysinfo.dwNumberOfProcessors * 2;
-	numThread = 0;
+	max_child = sysinfo.dwNumberOfProcessors * 2;
+	num_child = 0;
 	set(n);
 }
 
@@ -668,12 +668,12 @@ TPImplement::~TPImplement()
 void TPImplement::set(int n)
 {
 	AcquireSRWLockExclusive(&lock_pool);
-	numThread = n;
-	if (numThread < 0)
-		numThread = numTrdMax / 2;
-	numThread = std::min(std::max(numThread - 1, 0), numTrdMax);
-	if (numThread > 0)
-		SetThreadpoolThreadMaximum(pool, numThread);
+	num_child = n;
+	if (num_child < 0)
+		num_child = max_child / 2;
+	num_child = std::min(std::max(num_child - 1, 0), max_child);
+	if (num_child > 0)
+		SetThreadpoolThreadMaximum(pool, num_child);
 	ReleaseSRWLockExclusive(&lock_pool);
 }
 
@@ -682,13 +682,13 @@ int TPImplement::get()
 {
 	int n = 1;
 	AcquireSRWLockExclusive(&lock_pool);
-	n = numThread + 1;
+	n = num_child + 1;
 	ReleaseSRWLockExclusive(&lock_pool);
 	return n;
 }
 
 
-void TPImplement::run(Range const& range, TPLoopBody const& body)
+void TPImplement::run(Range const& range, TPLoopBody& body)
 {
 	if (get() <= 1)
 	{
@@ -697,7 +697,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 	}
 
 	AcquireSRWLockExclusive(&lock_pool);
-	TPJob job(range, body, numThread + 1);
+	TPJob job(range, body, num_child + 1);
 	do
 	{
 		TP_WORK* work = CreateThreadpoolWork(TPJob_Func, &job, &envir);
@@ -710,7 +710,7 @@ void TPImplement::run(Range const& range, TPLoopBody const& body)
 			job.finished = 1;
 			break;
 		}
-		for (int i = 0; i < numThread; ++i)
+		for (int i = 0; i < num_child; ++i)
 			SubmitThreadpoolWork(work);
 		job.execute(false);
 		log_assert(job.start >= job.end);
@@ -743,26 +743,25 @@ ThreadPool::ThreadPool(int n)
 	impl = nullptr;
 	(void)(n);
 #endif
-	nestedbuf = 0;
-	nestedptr = &nestedbuf;
+	nested = 0;
 }
 
 
 ThreadPool::~ThreadPool()
 {
-#if HAVE_PARALLEL_FRAMEWORK
-	delete impl;
-#endif
+	log_assert(nested == 0);
+	if (impl)
+		delete impl;
 }
 
 
 void ThreadPool::set(int n)
 {
 #if HAVE_PARALLEL_FRAMEWORK
-	int depth = atomic_fetch_add(nestedptr, 1);
+	int depth = atomic_fetch_add(&nested, 1);
 	log_assert(depth == 0 && "do not change thread number when working");
 	impl->set(n);
-	depth = atomic_fetch_add(nestedptr, -1);
+	depth = atomic_fetch_add(&nested, -1);
 	log_assert(depth == 1 && "do not work when changing thread number");
 #else 
 	(void)(n);
@@ -770,7 +769,7 @@ void ThreadPool::set(int n)
 }
 
 
-int ThreadPool::get() const
+int ThreadPool::get()
 {
 #if HAVE_PARALLEL_FRAMEWORK
 	return impl->get();
@@ -780,7 +779,7 @@ int ThreadPool::get() const
 }
 
 
-void ThreadPool::run(Range const& range, TPLoopBody const& body, bool usepar) const
+void ThreadPool::run(Range const& range, TPLoopBody& body, bool usepar)
 {
 	if (range.end <= range.start)
 		return;
@@ -795,16 +794,16 @@ void ThreadPool::run(Range const& range, TPLoopBody const& body, bool usepar) co
 
 #if HAVE_PARALLEL_FRAMEWORK
 
-	int depth = atomic_fetch_add(nestedptr, 1);
+	int depth = atomic_fetch_add(&nested, 1);
 	if (depth != 0)
 	{
-		atomic_fetch_add(nestedptr, -1);
+		atomic_fetch_add(&nested, -1);
 		body(range);
 	}
 	else
 	{
 		impl->run(range, body);
-		atomic_fetch_add(nestedptr, -1);
+		atomic_fetch_add(&nested, -1);
 	}
 
 #else 
