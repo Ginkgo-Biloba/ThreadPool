@@ -107,7 +107,7 @@ public:
 	{
 		log_assert(2 <= n);
 		start = range.start; end = range.end;
-		// adjust strie number depend on the specific work
+		// adjust stripe number depend on the specific work
 		nstripe = std::min(std::max(n * 2, 8), 64);
 		int64_t stripe = static_cast<int64_t>(range.end);
 		stripe = (stripe - range.start) / nstripe;
@@ -161,7 +161,7 @@ namespace details
 
 class TPWorker
 {
-	enum { Active_Wait = 1024 };
+	enum { ActiveWait = 1024 };
 
 	TPWorker(TPWorker const&) = delete;
 	TPWorker& operator =(TPWorker const&) = delete;
@@ -207,7 +207,7 @@ class TPImplement
 	TPImplement& operator =(TPImplement const&) = delete;
 	TPImplement& operator =(TPImplement&&) = delete;
 
-	enum { Active_Wait = 10240 };
+	enum { ActiveWait = 10240 };
 
 	// num_child 是子线程的数量
 	int max_child, num_child;
@@ -405,7 +405,7 @@ void TPWorker::loop()
 	while (!stoped)
 	{
 		log_info("worker %d loop (pause)...\n", id);
-		for (int i = 0; i < Active_Wait; ++i)
+		for (int i = 0; i < ActiveWait; ++i)
 		{
 			if (atomic_load(&wake_signal))
 				break;
@@ -448,7 +448,6 @@ void TPWorker::loop()
 		}
 		else
 		{ log_info("worker %d no more jobs\n", id); }
-
 	}
 }
 
@@ -514,7 +513,7 @@ void TPImplement::set(int n)
 		// decrease
 		for (; org > num_child; --org)
 			workers.pop_back();
-		// increase. make_unique requires C++ 14
+		// increase. make_unique requires C++14
 		for (; org < num_child; ++org)
 			workers.emplace_back(new TPWorker(this, org + 1));
 	}
@@ -525,7 +524,7 @@ void TPImplement::set(int n)
 int TPImplement::get()
 {
 	int n = 1;
-	// do we really need lock ?
+	// do we really need lock?
 	// if so, we can not get() when work, otherwise it will deadlock
 	// acquire_lock(&lock_pool);
 	// n = num_child + 1;
@@ -565,7 +564,7 @@ void TPImplement::run(Range const& range, TPLoopBody& body)
 	{
 		log_info("TPImplement: loop (pause) for job %p\n", &job);
 		// don't spin too much in any case (inaccurate getTickCount())
-		for (int i = 0; i < Active_Wait; ++i)
+		for (int i = 0; i < ActiveWait; ++i)
 		{
 			finished = atomic_load(&(job->finished));
 			if (finished)
@@ -680,17 +679,13 @@ void TPImplement::set(int n)
 
 int TPImplement::get()
 {
-	int n = 1;
-	AcquireSRWLockExclusive(&lock_pool);
-	n = num_child + 1;
-	ReleaseSRWLockExclusive(&lock_pool);
-	return n;
+	return atomic_load(&num_child) + 1;
 }
 
 
 void TPImplement::run(Range const& range, TPLoopBody& body)
 {
-	if (get() <= 1)
+	if (num_child == 0)
 	{
 		body(range);
 		return;

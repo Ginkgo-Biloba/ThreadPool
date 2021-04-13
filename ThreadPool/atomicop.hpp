@@ -10,10 +10,7 @@
 #  include <emmintrin.h> // for _mm_pause
 #endif
 
-static_assert(
-	sizeof(char) == 1 && sizeof(short) == 2 &&
-	sizeof(int) == 4 && sizeof(long long) == 8,
-	"size required");
+#include <cstdint>
 
 // prefer to use `int'. I have not used/tested others ...
 
@@ -46,34 +43,34 @@ inline type atomic_##gnuop(type* ptr, type comparand, type exchange)     \
 		vcop(reinterpret_cast<vctype*>(ptr), exchange, comparand));          \
 }
 
-GK_Atomic_Bin_Op(char, char, fetch_add, _InterlockedExchangeAdd8)
-GK_Atomic_Bin_Op(char, char, fetch_and, _InterlockedAnd8)
-GK_Atomic_Bin_Op(char, char, fetch_xor, _InterlockedXor8)
-GK_Atomic_Bin_Op(char, char, fetch_or, _InterlockedOr8)
-GK_Atomic_Bin_Op(char, char, exchange, _InterlockedExchange8)
-GK_Atomic_CAS_Op(char, char, compare_exchange, _InterlockedCompareExchange8);
+GK_Atomic_Bin_Op(int8_t, char, fetch_add, _InterlockedExchangeAdd8)
+GK_Atomic_Bin_Op(int8_t, char, fetch_and, _InterlockedAnd8)
+GK_Atomic_Bin_Op(int8_t, char, fetch_xor, _InterlockedXor8)
+GK_Atomic_Bin_Op(int8_t, char, fetch_or, _InterlockedOr8)
+GK_Atomic_Bin_Op(int8_t, char, exchange, _InterlockedExchange8)
+GK_Atomic_CAS_Op(int8_t, char, compare_exchange, _InterlockedCompareExchange8);
 
-GK_Atomic_Bin_Op(short, short, fetch_add, _InterlockedExchangeAdd16)
-GK_Atomic_Bin_Op(short, short, fetch_and, _InterlockedAnd16)
-GK_Atomic_Bin_Op(short, short, fetch_xor, _InterlockedXor16)
-GK_Atomic_Bin_Op(short, short, fetch_or, _InterlockedOr16)
-GK_Atomic_Bin_Op(short, short, exchange, _InterlockedExchange16)
-GK_Atomic_CAS_Op(short, short, compare_exchange, _InterlockedCompareExchange16);
+GK_Atomic_Bin_Op(int16_t, short, fetch_add, _InterlockedExchangeAdd16)
+GK_Atomic_Bin_Op(int16_t, short, fetch_and, _InterlockedAnd16)
+GK_Atomic_Bin_Op(int16_t, short, fetch_xor, _InterlockedXor16)
+GK_Atomic_Bin_Op(int16_t, short, fetch_or, _InterlockedOr16)
+GK_Atomic_Bin_Op(int16_t, short, exchange, _InterlockedExchange16)
+GK_Atomic_CAS_Op(int16_t, short, compare_exchange, _InterlockedCompareExchange16);
 
-GK_Atomic_Bin_Op(int, long, fetch_add, _InterlockedExchangeAdd)
-GK_Atomic_Bin_Op(int, long, fetch_and, _InterlockedAnd)
-GK_Atomic_Bin_Op(int, long, fetch_xor, _InterlockedXor)
-GK_Atomic_Bin_Op(int, long, fetch_or, _InterlockedOr)
-GK_Atomic_Bin_Op(int, long, exchange, _InterlockedExchange)
-GK_Atomic_CAS_Op(int, long, compare_exchange, _InterlockedCompareExchange);
+GK_Atomic_Bin_Op(int32_t, long, fetch_add, _InterlockedExchangeAdd)
+GK_Atomic_Bin_Op(int32_t, long, fetch_and, _InterlockedAnd)
+GK_Atomic_Bin_Op(int32_t, long, fetch_xor, _InterlockedXor)
+GK_Atomic_Bin_Op(int32_t, long, fetch_or, _InterlockedOr)
+GK_Atomic_Bin_Op(int32_t, long, exchange, _InterlockedExchange)
+GK_Atomic_CAS_Op(int32_t, long, compare_exchange, _InterlockedCompareExchange);
 
 #if GK_M_X64
-GK_Atomic_Bin_Op(long long, long long, fetch_add, _InterlockedExchangeAdd64)
-GK_Atomic_Bin_Op(long long, long long, fetch_and, _InterlockedAnd64)
-GK_Atomic_Bin_Op(long long, long long, fetch_xor, _InterlockedXor64)
-GK_Atomic_Bin_Op(long long, long long, fetch_or, _InterlockedOr64)
-GK_Atomic_Bin_Op(long long, long long, exchange, _InterlockedExchange64)
-GK_Atomic_CAS_Op(long long, long long, compare_exchange, _InterlockedCompareExchange64);
+GK_Atomic_Bin_Op(int64_t, long long, fetch_add, _InterlockedExchangeAdd64)
+GK_Atomic_Bin_Op(int64_t, long long, fetch_and, _InterlockedAnd64)
+GK_Atomic_Bin_Op(int64_t, long long, fetch_xor, _InterlockedXor64)
+GK_Atomic_Bin_Op(int64_t, long long, fetch_or, _InterlockedOr64)
+GK_Atomic_Bin_Op(int64_t, long long, exchange, _InterlockedExchange64)
+GK_Atomic_CAS_Op(int64_t, long long, compare_exchange, _InterlockedCompareExchange64);
 #endif
 
 #undef GK_Atomic_CAS_Op
@@ -116,34 +113,34 @@ inline type atomic_##gnuop(type* ptr, type comparand, type exchange)  \
 	return comparand;                                                   \
 }
 
-GK_Atomic_Bin_Op(char, fetch_add)
-GK_Atomic_Bin_Op(char, fetch_and)
-GK_Atomic_Bin_Op(char, fetch_xor)
-GK_Atomic_Bin_Op(char, fetch_or)
-GK_Atomic_XCH_Op(char, exchange)
-GK_Atomic_CAS_Op(char, compare_exchange)
+GK_Atomic_Bin_Op(int8_t, fetch_add)
+GK_Atomic_Bin_Op(int8_t, fetch_and)
+GK_Atomic_Bin_Op(int8_t, fetch_xor)
+GK_Atomic_Bin_Op(int8_t, fetch_or)
+GK_Atomic_XCH_Op(int8_t, exchange)
+GK_Atomic_CAS_Op(int8_t, compare_exchange)
 
-GK_Atomic_Bin_Op(short, fetch_add)
-GK_Atomic_Bin_Op(short, fetch_and)
-GK_Atomic_Bin_Op(short, fetch_xor)
-GK_Atomic_Bin_Op(short, fetch_or)
-GK_Atomic_XCH_Op(short, exchange)
-GK_Atomic_CAS_Op(short, compare_exchange)
+GK_Atomic_Bin_Op(int16_t, fetch_add)
+GK_Atomic_Bin_Op(int16_t, fetch_and)
+GK_Atomic_Bin_Op(int16_t, fetch_xor)
+GK_Atomic_Bin_Op(int16_t, fetch_or)
+GK_Atomic_XCH_Op(int16_t, exchange)
+GK_Atomic_CAS_Op(int16_t, compare_exchange)
 
-GK_Atomic_Bin_Op(int, fetch_add)
-GK_Atomic_Bin_Op(int, fetch_and)
-GK_Atomic_Bin_Op(int, fetch_xor)
-GK_Atomic_Bin_Op(int, fetch_or)
-GK_Atomic_XCH_Op(int, exchange)
-GK_Atomic_CAS_Op(int, compare_exchange)
+GK_Atomic_Bin_Op(int32_t, fetch_add)
+GK_Atomic_Bin_Op(int32_t, fetch_and)
+GK_Atomic_Bin_Op(int32_t, fetch_xor)
+GK_Atomic_Bin_Op(int32_t, fetch_or)
+GK_Atomic_XCH_Op(int32_t, exchange)
+GK_Atomic_CAS_Op(int32_t, compare_exchange)
 
 #if GK_M_X64
-GK_Atomic_Bin_Op(long long, fetch_add)
-GK_Atomic_Bin_Op(long long, fetch_and)
-GK_Atomic_Bin_Op(long long, fetch_xor)
-GK_Atomic_Bin_Op(long long, fetch_or)
-GK_Atomic_XCH_Op(long long, exchange)
-GK_Atomic_CAS_Op(long long, compare_exchange)
+GK_Atomic_Bin_Op(int64_t, fetch_add)
+GK_Atomic_Bin_Op(int64_t, fetch_and)
+GK_Atomic_Bin_Op(int64_t, fetch_xor)
+GK_Atomic_Bin_Op(int64_t, fetch_or)
+GK_Atomic_XCH_Op(int64_t, exchange)
+GK_Atomic_CAS_Op(int64_t, compare_exchange)
 #endif
 
 #undef GK_Atomic_CAS_Op
@@ -178,34 +175,34 @@ inline type atomic_##gnuop(type* ptr, type comparand, type exchange)  \
 #warning "no equivalent exchange operation is available"              \
 "__sync_lock_test_and_set is not a full barrier, use at your own risk"
 
-GK_Atomic_Bin_Op(char, fetch_add, fetch_and_add)
-GK_Atomic_Bin_Op(char, fetch_and, fetch_and_and)
-GK_Atomic_Bin_Op(char, fetch_xor, fetch_and_xor)
-GK_Atomic_Bin_Op(char, fetch_or, fetch_and_or)
-GK_Atomic_Bin_Op(char, exchange, lock_test_and_set)
-GK_Atomic_CAS_Op(char, compare_exchange, val_compare_and_swap)
+GK_Atomic_Bin_Op(int8_t, fetch_add, fetch_and_add)
+GK_Atomic_Bin_Op(int8_t, fetch_and, fetch_and_and)
+GK_Atomic_Bin_Op(int8_t, fetch_xor, fetch_and_xor)
+GK_Atomic_Bin_Op(int8_t, fetch_or, fetch_and_or)
+GK_Atomic_Bin_Op(int8_t, exchange, lock_test_and_set)
+GK_Atomic_CAS_Op(int8_t, compare_exchange, val_compare_and_swap)
 
-GK_Atomic_Bin_Op(short, fetch_add, fetch_and_add)
-GK_Atomic_Bin_Op(short, fetch_and, fetch_and_and)
-GK_Atomic_Bin_Op(short, fetch_xor, fetch_and_xor)
-GK_Atomic_Bin_Op(short, fetch_or, fetch_and_or)
-GK_Atomic_Bin_Op(short, exchange, lock_test_and_set)
-GK_Atomic_CAS_Op(short, compare_exchange, val_compare_and_swap)
+GK_Atomic_Bin_Op(int16_t, fetch_add, fetch_and_add)
+GK_Atomic_Bin_Op(int16_t, fetch_and, fetch_and_and)
+GK_Atomic_Bin_Op(int16_t, fetch_xor, fetch_and_xor)
+GK_Atomic_Bin_Op(int16_t, fetch_or, fetch_and_or)
+GK_Atomic_Bin_Op(int16_t, exchange, lock_test_and_set)
+GK_Atomic_CAS_Op(int16_t, compare_exchange, val_compare_and_swap)
 
-GK_Atomic_Bin_Op(int, fetch_add, fetch_and_add)
-GK_Atomic_Bin_Op(int, fetch_and, fetch_and_and)
-GK_Atomic_Bin_Op(int, fetch_xor, fetch_and_xor)
-GK_Atomic_Bin_Op(int, fetch_or, fetch_and_or)
-GK_Atomic_Bin_Op(int, exchange, lock_test_and_set)
-GK_Atomic_CAS_Op(int, compare_exchange, val_compare_and_swap)
+GK_Atomic_Bin_Op(int32_t, fetch_add, fetch_and_add)
+GK_Atomic_Bin_Op(int32_t, fetch_and, fetch_and_and)
+GK_Atomic_Bin_Op(int32_t, fetch_xor, fetch_and_xor)
+GK_Atomic_Bin_Op(int32_t, fetch_or, fetch_and_or)
+GK_Atomic_Bin_Op(int32_t, exchange, lock_test_and_set)
+GK_Atomic_CAS_Op(int32_t, compare_exchange, val_compare_and_swap)
 
 #if GK_M_X64
-GK_Atomic_Bin_Op(long long, fetch_add, fetch_and_add)
-GK_Atomic_Bin_Op(long long, fetch_and, fetch_and_and)
-GK_Atomic_Bin_Op(long long, fetch_xor, fetch_and_xor)
-GK_Atomic_Bin_Op(long long, fetch_or, fetch_and_or)
-GK_Atomic_Bin_Op(long long, exchange, lock_test_and_set)
-GK_Atomic_CAS_Op(long long, compare_exchange, val_compare_and_swap)
+GK_Atomic_Bin_Op(int64_t, fetch_add, fetch_and_add)
+GK_Atomic_Bin_Op(int64_t, fetch_and, fetch_and_and)
+GK_Atomic_Bin_Op(int64_t, fetch_xor, fetch_and_xor)
+GK_Atomic_Bin_Op(int64_t, fetch_or, fetch_and_or)
+GK_Atomic_Bin_Op(int64_t, exchange, lock_test_and_set)
+GK_Atomic_CAS_Op(int64_t, compare_exchange, val_compare_and_swap)
 #endif
 
 #undef GK_Atomic_CAS_Op
@@ -245,13 +242,12 @@ inline utype atomic_compare_exchange(utype* ptr,                \
 		));                                                         \
 }
 
-GK_Unsigned2Signed(unsigned char, char)
-GK_Unsigned2Signed(signed char, char)
-GK_Unsigned2Signed(unsigned short, short)
-GK_Unsigned2Signed(unsigned, int)
+GK_Unsigned2Signed(uint8_t, int8_t)
+GK_Unsigned2Signed(uint16_t, int16_t)
+GK_Unsigned2Signed(uint32_t, int32_t)
 
 #if GK_M_X64
-GK_Unsigned2Signed(unsigned long long, long long);
+GK_Unsigned2Signed(uint64_t, int64_t);
 #endif
 }
 
@@ -269,16 +265,15 @@ inline type atomic_load(type* ptr)    \
 	return atomic_fetch_or(ptr, 0);     \
 }
 
-GK_Atomic_Load(char)
-GK_Atomic_Load(unsigned char)
-GK_Atomic_Load(signed char)
-GK_Atomic_Load(short)
-GK_Atomic_Load(unsigned short)
-GK_Atomic_Load(int)
-GK_Atomic_Load(unsigned)
+GK_Atomic_Load(int8_t)
+GK_Atomic_Load(uint8_t)
+GK_Atomic_Load(int16_t)
+GK_Atomic_Load(uint16_t)
+GK_Atomic_Load(int32_t)
+GK_Atomic_Load(uint32_t)
 #if GK_M_X64
-GK_Atomic_Load(long long)
-GK_Atomic_Load(unsigned long long)
+GK_Atomic_Load(int64_t)
+GK_Atomic_Load(uint64_t)
 #endif
 
 #undef GK_Atomic_Load
