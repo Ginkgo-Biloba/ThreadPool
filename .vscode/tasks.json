@@ -21,7 +21,7 @@
 				// "-g",
 				"-O2",
 				"-o",
-				"x64_Release\\main.exe",
+				"ThreadPool.exe",
 				"-msse4.2",
 				"ThreadPool\\main.cpp",
 				"ThreadPool\\threadpool.cpp",

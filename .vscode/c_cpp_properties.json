@@ -4,8 +4,6 @@
 			"name": "Win32",
 			"defines": [
 				"_DEBUG",
-				"UNICODE",
-				"_UNICODE"
 			],
 			"windowsSdkVersion": "8.1",
 			"compilerPath": "${env:mingw}/bin/g++.exe",
