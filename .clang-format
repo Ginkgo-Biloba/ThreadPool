@@ -1,6 +1,6 @@
 ---
-Language:      Cpp
-BasedOnStyle:  WebKit
+Language : Cpp
+BasedOnStyle : WebKit
 
 IndentWidth : 2
 AccessModifierOffset : -2
@@ -15,18 +15,24 @@ TabWidth : 2
 UseTab : Always
 
 BreakBeforeBraces : Allman
+BreakBeforeBinaryOperators : All
 BreakBeforeTernaryOperators : true
-# AllowAllArgumentsOnNextLine : true
-# AllowAllConstructorInitializersOnNextLine : true
+AlignTrailingComments : true
+AllowAllArgumentsOnNextLine : true
+AllowAllConstructorInitializersOnNextLine : true
 AllowAllParametersOfDeclarationOnNextLine : true
 AllowShortBlocksOnASingleLine : true
 AllowShortCaseLabelsOnASingleLine : true
-AllowShortFunctionsOnASingleLine : true
+AllowShortEnumsOnASingleLine : true
+AllowShortFunctionsOnASingleLine : Empty
 AllowShortIfStatementsOnASingleLine : true
 AllowShortLoopsOnASingleLine : true
-# AllowShortLambdasOnASingleLine : true
+AllowShortLambdasOnASingleLine : true
+ConstructorInitializerAllOnOneLineOrOnePerLine : true
+Cpp11BracedListStyle : true
 
+# ColumnLimit : 0
 MaxEmptyLinesToKeep : 2
 KeepEmptyLinesAtTheStartOfBlocks : false
-
+SortIncludes : false
 ...

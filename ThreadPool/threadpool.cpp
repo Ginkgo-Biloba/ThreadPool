@@ -276,7 +276,7 @@ inline void wake_condvar(pthread_cond_t* cond)
 
 #elif defined HAVE_WIN32_THREAD
 
-static unsigned _stdcall TPWorker_Func(void* vp_worker)
+static unsigned __stdcall TPWorker_Func(void* vp_worker)
 {
 	TPWorker* worker = static_cast<TPWorker*>(vp_worker);
 	worker->loop();
@@ -780,7 +780,7 @@ void ThreadPool::run(Range const& range, TPLoopBody& body, bool usepar)
 		return;
 
 	// 有时候想让外面的 parallel_for 单线程跑，而内部嵌套的并行
-	usepar |= (range.end == range.start + 1);
+	usepar = usepar && (range.end > range.start + 1);
 	if (!usepar)
 	{
 		body(range);
@@ -800,7 +800,7 @@ void ThreadPool::run(Range const& range, TPLoopBody& body, bool usepar)
 		impl->run(range, body);
 		atomic_fetch_add(&nested, -1);
 	}
-
+	
 #else 
 
 	body(range);

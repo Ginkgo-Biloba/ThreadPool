@@ -110,7 +110,7 @@ void draw(double ox, double oy, double radius, int size, ThreadPool& pool)
 	Mat img(size, size);
 	char buf[1 << 10];
 	pool.run(Range(0, size), Mandelbrot(img, ox, oy, radius), true);
-	sprintf(buf, "G:/Sample/mandelbrot_%f.pgm", radius);
+	sprintf(buf, "mandelbrot_%f.pgm", radius);
 	if (save_pgm)
 		pgm_write(img, buf);
 }
@@ -133,8 +133,7 @@ int main(int argc, char**)
 		draw(x, y, pow(0.2, i - 1), size, pool);
 	sum_tick = clock() - sum_tick;
 
-	printf("%d, %f ms\n", pool.get(), 
-		sum_tick * 1e3 / CLOCKS_PER_SEC);
+	printf("%d, %f ms\n", pool.get(), sum_tick * 1e3 / CLOCKS_PER_SEC);
 	return 0;
 }
 

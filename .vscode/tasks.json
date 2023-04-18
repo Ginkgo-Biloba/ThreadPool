@@ -4,10 +4,11 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "x64_release",
+			"label": "mingw64",
 			"type": "process",
 			"command": "${env:mingw}/bin/g++.exe",
 			"args": [
+				"-D_WIN32_WINNT=_WIN32_WINNT_WIN6",
 				"-std=c++11",
 				"-Wall",
 				"-Wextra",
