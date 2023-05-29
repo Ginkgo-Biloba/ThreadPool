@@ -24,7 +24,7 @@
 					"ignoreFailures": false
 				}
 			],
-			"preLaunchTask": "compile"
+			"preLaunchTask": "mingw64"
 		},
 	]
 }

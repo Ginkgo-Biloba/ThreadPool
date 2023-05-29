@@ -12,7 +12,7 @@ IndentPPDirectives : AfterHash
 NamespaceIndentation : None
 
 TabWidth : 2
-UseTab : Always
+UseTab : AlignWithSpaces
 
 BreakBeforeBraces : Allman
 BreakBeforeBinaryOperators : All

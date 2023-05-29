@@ -1,16 +1,16 @@
 ﻿#include <ctime>
-#include <cassert>
 #include <cmath>
-#include <cstdlib>
-#include <cstdio>
 #include <algorithm>
 #include <fstream>
-#include "threadpool.hpp"
+#include <vector>
+#include "asyncpool.hpp"
+#include "syncpool.hpp"
 using namespace gk;
+using std::vector;
 
 typedef unsigned char uchar;
 
-static int save_pgm = 0;
+static int saveppm = 0;
 
 class Mat
 {
@@ -23,7 +23,7 @@ public:
 		if (r * c > 0)
 		{
 			data = static_cast<uchar*>(malloc(r * c * sizeof(data[0])));
-			assert(data);
+			log_assert(data);
 			rows = r;
 			cols = c;
 		}
@@ -41,10 +41,40 @@ public:
 	}
 };
 
-
-class Mandelbrot : public gk::TPLoopBody
+static void draw_mandelbrot(Mat& m, double x0, double y0, double ppi, int start, int stop)
 {
-	enum { Iteration = 300 };
+	int const iteration = 300;
+	for (int h = start; h < stop; ++h)
+	{
+		uchar* M = m.data + h * m.cols;
+		double Y0 = y0 + h * ppi;
+		for (int w = 0; w < m.cols; ++w)
+		{
+			double X0 = x0 + w * ppi;
+			double x = 0, y = 0, t;
+			double z = x * x + y * y;
+			int iter = 0;
+			while (z < 4 && iter < iteration)
+			{
+				++iter;
+				t = x * x - y * y + X0;
+				y = 2 * x * y + Y0;
+				x = t;
+				z = x * x + y * y;
+			}
+			// make gradient smother
+			if (z > 4)
+				z = iter - log2(log2(z) * 0.5);
+			else
+				z = iter;
+			z *= 255.0 / iteration;
+			M[w] = static_cast<uchar>(z);
+		}
+	}
+}
+
+class Mandelbrot : public gk::SyncTask
+{
 	Mat& m;
 	int rows, cols;
 	double x0, y0, ppi;
@@ -57,84 +87,93 @@ public:
 		y0 = oy - radius;
 		ppi = 2 * radius / std::min(rows, cols);
 	}
-
-	// per-row
-	void operator ()(Range const& range) override
+	void call(int start, int stop) override
 	{
-		for (int h = range.start; h < range.end; ++h)
-		{
-			uchar* M = m.data + h * cols;
-			double Y0 = y0 + h * ppi;
-			for (int w = 0; w < cols; ++w)
-			{
-				double X0 = x0 + w * ppi;
-				double x = 0, y = 0, t;
-				double z = x * x + y * y;
-				int iter = 0;
-				while (z < 4 && iter < Iteration)
-				{
-					++iter;
-					t = x * x - y * y + X0;
-					y = 2 * x * y + Y0;
-					x = t;
-					z = x * x + y * y;
-				}
-				// make gradient smother
-				if (z > 4)
-					z = iter - log2(log2(z) * 0.5);
-				else
-					z = iter;
-				z *= 255.0 / Iteration;
-				M[w] = static_cast<uchar>(z);
-			}
-		}
+		draw_mandelbrot(m, x0, y0, ppi, start, stop);
 	}
 };
 
-
-bool pgm_write(Mat const& img, char const* name)
+bool ppm_write(Mat const& img, char const* name)
 {
 	size_t size = sizeof(uchar) * img.rows * img.cols;
 	std::ofstream ofs;
 	ofs.open(name, std::ios::binary | std::ios::trunc);
 	if (!(ofs.is_open()))
 		return false;
-	ofs << "P5\n" << img.cols << " " << img.rows << "\n255\n";
+	ofs << "P5\n"
+			<< img.cols << " " << img.rows << "\n255\n";
 	ofs.write(reinterpret_cast<char const*>(img.data), size);
 	return static_cast<size_t>(ofs.tellp()) == size;
 }
 
-
-void draw(double ox, double oy, double radius, int size, ThreadPool& pool)
+void draw(double ox, double oy, double radius, int size, SyncPool& pool)
 {
 	Mat img(size, size);
-	char buf[1 << 10];
-	pool.run(Range(0, size), Mandelbrot(img, ox, oy, radius), true);
-	sprintf(buf, "mandelbrot_%f.pgm", radius);
-	if (save_pgm)
-		pgm_write(img, buf);
+	char buf[128];
+	Mandelbrot mandelbrot(img, ox, oy, radius);
+	pool.submit(0, size, mandelbrot);
+	sprintf(buf, "mandelbrot_%f.ppm", radius);
+	if (saveppm)
+		ppm_write(img, buf);
 }
 
-
-int main(int argc, char**)
+class MandelAsync : public AsyncTask
 {
-	if (argc > 1)
-		save_pgm = 1;
+	Mat m;
+	int rows, cols;
+	double rad, x0, y0, ppi;
+
+public:
+	MandelAsync(int size, double ox, double oy, double radius)
+		: m(size, size), rows(m.rows), cols(m.cols), rad(radius)
+	{
+		x0 = ox - radius;
+		y0 = oy - radius;
+		ppi = 2 * radius / std::min(rows, cols);
+	}
+
+	void call() override
+	{
+		char buf[128];
+		draw_mandelbrot(m, x0, y0, ppi, 0, m.rows);
+		sprintf(buf, "mandelbrot_%f.ppm", rad);
+		if (saveppm)
+			ppm_write(m, buf);
+	}
+};
+
+int main()
+{
+	saveppm = 1;
 	puts("├Hello, World┤");
 	double sum_tick = clock();
-	ThreadPool pool;
-	int nums[6] = { 0, 4, 2, 6, 3, 5 };
-	for (size_t i = 0; i < 6; ++i)
-		pool.set(nums[i]);
-	int size = 1000;
+	int nums[6] = {0, 4, 2, 5, 3, 6};
+	int size = 2000;
 	double x = 0.27322626, y = 0.595153338;
-	draw(-0.75, 0, 1.5, size, pool);
-	for (int i = 2; i < 7; ++i)
-		draw(x, y, pow(0.2, i - 1), size, pool);
+	if (0)
+	{
+		SyncPool pool;
+		for (size_t i = 0; i < 6; ++i)
+			pool.set(nums[i]);
+		draw(-0.75, 0, 1.5, size, pool);
+		for (int i = 2; i < 7; ++i)
+			draw(x, y, pow(0.2, i - 1), size, pool);
+	}
+	else
+	{
+		AsyncPool pool;
+		vector<AsyncTask*> tasks;
+		for (size_t i = 0; i < 6; ++i)
+			pool.set(nums[i]);
+		tasks.push_back(new MandelAsync(size, -0.75, 0, 1.5));
+		for (int i = 2; i < 7; ++i)
+			tasks.push_back(new MandelAsync(size, x, y, pow(0.2, i - 1)));
+		pool.submit(tasks.data(), tasks.size());
+		for (auto& t : tasks)
+			t->subref();
+		tasks.clear();
+		pool.wait();
+	}
 	sum_tick = clock() - sum_tick;
-
-	printf("%d, %f ms\n", pool.get(), sum_tick * 1e3 / CLOCKS_PER_SEC);
-	return 0;
+	printf("main: %f ms\n", sum_tick * 1e3 / CLOCKS_PER_SEC);
 }
-
-

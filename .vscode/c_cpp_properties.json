@@ -7,11 +7,14 @@
 				"_WIN32_WINNT=_WIN32_WINNT_WIN6"
 			],
 			"windowsSdkVersion": "8.1",
-			"compilerPath": "${env:mingw}/bin/g++.exe",
+			"compilerPath": "${env:mingw}\\bin\\g++.exe",
 			"cStandard": "c11",
 			"cppStandard": "c++11",
 			"intelliSenseMode": "windows-gcc-x64",
-			"includePath": []
+			"includePath": [],
+			"compilerArgs": [
+				"-msse4.2"
+			]
 		}
 	],
 	"version": 4
