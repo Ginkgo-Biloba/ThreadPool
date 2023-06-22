@@ -1,4 +1,5 @@
 ﻿#include "asyncpool.hpp"
+#include <cstring>
 #include <vector>
 #include <deque>
 #undef small
@@ -166,7 +167,7 @@ AsyncWorker::AsyncWorker(AsyncImpl* p)
 		return;
 	}
 #	elif defined HAVE_WIN32_THREAD
-	// for initialize CRT runtime, not use CreateThread
+	// for initialize CRT runtime, dot not use CreateThread
 	win32_thread = _beginthreadex(NULL, 0, Worker_Func, this, 0, &win32_id);
 	if (win32_thread == 0)
 	{

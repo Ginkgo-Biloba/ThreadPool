@@ -38,6 +38,8 @@ public:
 	{
 		if (data)
 			free(data);
+		data = nullptr;
+		rows = cols = -1;
 	}
 };
 
@@ -73,7 +75,7 @@ static void draw_mandelbrot(Mat& m, double x0, double y0, double ppi, int start,
 	}
 }
 
-class Mandelbrot : public gk::SyncTask
+class Mandelbrot : public gk::SyncJob
 {
 	Mat& m;
 	int rows, cols;
@@ -87,9 +89,9 @@ public:
 		y0 = oy - radius;
 		ppi = 2 * radius / std::min(rows, cols);
 	}
-	void call(int start, int stop) override
+	void call(int from, int to) override
 	{
-		draw_mandelbrot(m, x0, y0, ppi, start, stop);
+		draw_mandelbrot(m, x0, y0, ppi, from, to);
 	}
 };
 
@@ -110,9 +112,12 @@ void draw(double ox, double oy, double radius, int size, SyncPool& pool)
 {
 	Mat img(size, size);
 	char buf[128];
-	Mandelbrot mandelbrot(img, ox, oy, radius);
-	pool.submit(0, size, mandelbrot);
+	SyncJob* m = new Mandelbrot(img, ox, oy, radius);
+	m->start = 0;
+	m->stop = size;
+	pool.submit(m);
 	sprintf(buf, "mandelbrot_%f.ppm", radius);
+	m->subref();
 	if (saveppm)
 		ppm_write(img, buf);
 }
@@ -144,13 +149,13 @@ public:
 
 int main()
 {
-	saveppm = 1;
+	saveppm = 0;
 	puts("├Hello, World┤");
 	double sum_tick = clock();
 	int nums[6] = {0, 4, 2, 5, 3, 6};
 	int size = 2000;
 	double x = 0.27322626, y = 0.595153338;
-	if (0)
+	if (1)
 	{
 		SyncPool pool;
 		for (size_t i = 0; i < 6; ++i)

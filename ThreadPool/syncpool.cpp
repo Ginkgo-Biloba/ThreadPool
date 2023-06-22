@@ -6,6 +6,7 @@
 
 #include "syncpool.hpp"
 #include "atomic.hpp"
+#include <cstring>
 #include <vector>
 #undef small
 #undef min
@@ -24,72 +25,63 @@ static int sWorkerIndex = 0;
 
 //////////////////// SyncJob ////////////////////
 
-class SyncJob : public RefCount<SyncJob>
+SyncJob::SyncJob()
+	: max_call(INT_MAX), start(0), stop(0)
 {
-public:
-	int id;
-	// current work index and stop
-	int start, stop, index, nstripe;
-	// number of threads worked on this job
-	int active;
-	// number of threads completed any activities on this job
-	int completed;
-	int finished;
-	SyncTask* task;
+	id = atomic_fetch_add(&sJobIndex, 1);
+}
 
-	SyncJob(int _start, int _stop, SyncTask* _task)
-		: start(_start), stop(_stop), task(_task)
-	{
-		id = atomic_fetch_add(&sJobIndex, 1);
-		index = start;
-		// adjust stripe number depend on the specific work
-		nstripe = min(max(task->max_call * 2, 8), 64);
-		int64_t stripe = static_cast<int64_t>(stop);
-		stripe = (stripe - start + nstripe - 1) / nstripe;
-		// if log_assert failed, consider scale or offset the range
-		log_assert(stop < INT_MAX - stripe + start);
-		log_assert(stop < INT_MAX - stripe * task->max_call);
-		active = completed = finished = 0;
-		log_info(
-			"job %d(%p) has been created [%d, %d) nstripe %d \n",
-			id, this, start, stop, nstripe);
-	}
+SyncJob::~SyncJob()
+{
+	log_assert(atomic_load(&finished));
+	log_info("job %d(%p) has been deleted\n", id, this);
+}
 
-	int call(bool spawned)
-	{
-		int sum = 0;
-		int cur, len;
-		for (;;)
-		{
-			cur = atomic_load(&index);
-			if (cur >= stop)
-				break;
-			len = max((stop - cur) / nstripe, 1);
-			cur = atomic_fetch_add(&index, len);
-			if (cur >= stop)
-				break;
-			len = min(len, stop - cur);
-			sum += len;
-			task->call(cur, cur + len);
-		}
-		int fin = atomic_load(&finished);
-		if (spawned && fin)
-		{
-			log_error(
-				"xxxxx BUG xxxxxx\n"
-				"\tjob %p start %d, stop %d, active %d, completed %d\n",
-				this, start, stop, active, completed);
-		}
-		return sum;
-	}
+int SyncJob::schedule(int n)
+{
+	index = start;
+	n = max(n, 1);
+	// adjust stripe number depend on the specific work
+	nstripe = min(n * min(n, 4), 128);
+	nstripe = min(nstripe, max(stop - start, 1));
+	int64_t stripe = static_cast<int64_t>(stop);
+	stripe = (stripe - start + nstripe - 1) / nstripe;
+	// if log_assert failed, consider scale or offset the range
+	log_assert(stop < INT_MAX - stripe + start);
+	active = completed = finished = 0;
+	log_info(
+		"job %d(%p) has been created [%d, %d) nstripe %d \n",
+		id, this, start, stop, nstripe);
+	return nstripe;
+}
 
-protected:
-	~SyncJob()
+int SyncJob::call(bool spawned)
+{
+	int sum = 0;
+	int cur, len;
+	for (;;)
 	{
-		log_assert(atomic_load(&finished));
-		log_info("job %d(%p) has been deleted\n", id, this);
+		cur = atomic_load(&index);
+		if (cur >= stop)
+			break;
+		len = max((stop - cur) / nstripe, 1);
+		cur = atomic_fetch_add(&index, len);
+		if (cur >= stop)
+			break;
+		len = min(len, stop - cur);
+		sum += len;
+		call(cur, cur + len);
 	}
-};
+	int fin = atomic_load(&finished);
+	if (spawned && fin)
+	{
+		log_error(
+			"xxxxx BUG xxxxxx\n"
+			"\tjob %p start %d, stop %d, active %d, completed %d\n",
+			this, start, stop, active, completed);
+	}
+	return sum;
+}
 
 #	if defined HAVE_WIN32_POOL
 
@@ -115,16 +107,16 @@ public:
 	SyncImpl();
 	~SyncImpl();
 	int set(int n);
-	void submit(int start, int stop, SyncTask& task);
-};
+	void submit(SyncJob* job);
 
-// no need to use PTP_CALLBACK_INSTANCE and PTP_WORK
-static VOID CALLBACK Worker_Func(PTP_CALLBACK_INSTANCE, PVOID vp_job, PTP_WORK)
-{
-	SyncJob* job = static_cast<SyncJob*>(vp_job);
-	if (atomic_load(&(job->index)) < job->stop)
-		job->call(true);
-}
+	// no need to use PTP_CALLBACK_INSTANCE and PTP_WORK
+	static VOID CALLBACK Func(PTP_CALLBACK_INSTANCE, PVOID vp_job, PTP_WORK)
+	{
+		SyncJob* job = static_cast<SyncJob*>(vp_job);
+		if (atomic_load(&(job->index)) < job->stop)
+			job->call(true);
+	}
+};
 
 SyncImpl::SyncImpl()
 {
@@ -184,29 +176,26 @@ int SyncImpl::set(int size)
 }
 
 
-void SyncImpl::submit(int start, int stop, SyncTask& task)
+void SyncImpl::submit(SyncJob* job)
 {
-	int child = task.max_call - 1;
-	child = min(child, num_worker);
-	child = min(child, stop - start - 1);
-	task.max_call = child + 1;
+	int child = num_worker;
+	child = min(child, job->schedule(child + 1) - 1);
 	if (child < 1)
 	{
-		task.call(start, stop);
+		job->call(job->start, job->stop);
 		return;
 	}
 
 	AcquireSRWLockExclusive(&lock_pool);
-	SyncJob* job = new SyncJob(start, stop, &task);
 	do
 	{
-		TP_WORK* work = CreateThreadpoolWork(Worker_Func, job, &callback_environ);
+		TP_WORK* work = CreateThreadpoolWork(Func, job, &callback_environ);
 		if (work == NULL)
 		{
 			log_error("SyncImpl: CreateThreadpoolWork failed, err = %d",
 				static_cast<int>(GetLastError()));
 			// try or not?
-			// task.call(start, stop);
+			// job->call(start, stop);
 			// break;
 		}
 		for (int i = 0; i < num_worker; ++i)
@@ -218,7 +207,6 @@ void SyncImpl::submit(int start, int stop, SyncTask& task)
 		job->finished = 1;
 		log_info("SyncImpl: done for job %d(%p)\n", job->id, job);
 	} while (0);
-	job->subref();
 	ReleaseSRWLockExclusive(&lock_pool);
 }
 }
@@ -229,7 +217,7 @@ namespace details
 {
 //////////////////// SyncWorker ////////////////////
 
-struct SyncWorker
+class SyncWorker
 {
 	enum
 	{
@@ -240,6 +228,7 @@ struct SyncWorker
 	SyncWorker& operator=(SyncWorker&&) = delete;
 	SyncWorker& operator=(SyncWorker const&) = delete;
 
+public:
 	SyncImpl* pool;
 	SyncJob* job;
 
@@ -263,7 +252,7 @@ struct SyncWorker
 	// for vector
 	SyncWorker(SyncWorker&&);
 	~SyncWorker();
-	void assign(SyncJob* jshr);
+	void assign(SyncJob* rhs);
 	void loop();
 };
 
@@ -278,35 +267,28 @@ class SyncImpl
 
 	enum
 	{
+		OnIdle = 0,
+		OnBusy = 1,
 		ActiveWait = 10240
 	};
 
+	int on_worker;
 	int max_worker;
-#		if defined HAVE_PTHREADS_PF || defined HAVE_WIN32_THREAD
-	SyncJob* job;
 	vector<SyncWorker> workers; // 子线程
-#		endif
 
 public:
 #		if defined HAVE_PTHREADS_PF
-	pthread_mutex_t lock_pool;
 	pthread_mutex_t lock_work;
 	pthread_cond_t cond_work;
 #		elif defined HAVE_WIN32_THREAD
-	SRWLOCK lock_pool;
 	SRWLOCK lock_work;
 	CONDITION_VARIABLE cond_work;
-#		elif defined HAVE_WIN32_POOL
-	TP_POOL* pool;                   // the actual Thread-Pool resource
-	TP_CALLBACK_ENVIRON envir;       // connect work-items to our custom Thread-Pool
-	TP_CLEANUP_GROUP* cleanup_group; // clean things up neatly when we are done
-	SRWLOCK lock_pool;
 #		endif
 
 	SyncImpl();
 	~SyncImpl();
 	int set(int size);
-	void submit(int start, int stop, SyncTask& task);
+	void submit(SyncJob* job);
 };
 
 //////////////////// SyncWorker ////////////////////
@@ -402,8 +384,6 @@ void SyncWorker::assign(SyncJob* rhs)
 	log_assert(!stopped && "has stopped");
 	log_info("worker %d is assigned job %d(%p)\n", id, rhs->id, rhs);
 	acquire_lock(&lock_job);
-	// job may have been finished before `I' wake
-	// log_assert(!job && "in working");
 	// make sure that previous job is finished
 	log_assert(!job || job->finished);
 	if (job)
@@ -478,18 +458,16 @@ void SyncWorker::loop()
 //////////////////// SyncImpl ////////////////////
 
 SyncImpl::SyncImpl()
-	: job(nullptr)
+	: on_worker(OnIdle)
 {
 	log_info("SyncImpl: create SyncImpl start\n");
 #		if defined HAVE_PTHREADS_PF
 	int err = 0;
-	err |= pthread_mutex_init(&lock_pool, NULL);
 	err |= pthread_mutex_init(&lock_work, NULL);
 	err |= pthread_cond_init(&cond_work, NULL);
 	log_assert(!err && "failed to initialize SyncImpl (pthreads)");
 	max_worker = pthread_num_processors_np() * 2; // not too much
 #		elif defined HAVE_WIN32_THREAD
-	InitializeSRWLock(&lock_pool);
 	InitializeSRWLock(&lock_work);
 	InitializeConditionVariable(&cond_work);
 	SYSTEM_INFO sysinfo;
@@ -502,7 +480,7 @@ SyncImpl::SyncImpl()
 
 SyncImpl::~SyncImpl()
 {
-	acquire_lock(&lock_pool);
+	log_assert(atomic_exchange(&on_worker, OnBusy) == OnIdle);
 	int len = static_cast<int>(workers.size());
 	log_info("SyncImpl: destroy SyncImpl with %d workers\n", len);
 	while (len--)
@@ -510,23 +488,19 @@ SyncImpl::~SyncImpl()
 		log_assert(!(workers[len].job) || (workers[len].job->finished));
 		workers.pop_back();
 	}
-	log_assert(!job || job->finished);
-	if (job)
-		job->subref();
-	release_lock(&lock_pool);
 #		if defined HAVE_PTHREADS_PF
 	pthread_cond_destroy(&cond_work);
 	pthread_mutex_destroy(&lock_work);
-	pthread_mutex_destroy(&lock_pool);
 #		elif defined HAVE_WIN32_THREAD
 	_CRT_UNUSED(len);
 	// nothing to do
 #		endif
+	atomic_store(&on_worker, OnIdle);
 }
 
 int SyncImpl::set(int size)
 {
-	acquire_lock(&lock_pool);
+	log_assert(atomic_exchange(&on_worker, OnBusy) == OnIdle);
 	int curr = static_cast<int>(workers.size());
 	if (size != INT_MIN)
 	{
@@ -540,29 +514,25 @@ int SyncImpl::set(int size)
 		for (int i = curr; i > size - 1; --i)
 			workers.pop_back();
 	}
-	release_lock(&lock_pool);
+	atomic_store(&on_worker, OnIdle);
 	return curr + 1;
 }
 
-void SyncImpl::submit(int start, int stop, SyncTask& task)
+void SyncImpl::submit(SyncJob* job)
 {
-	int child = task.max_call - 1;
-	child = min(child, stop - start - 1);
-	child = min(child, static_cast<int>(workers.size()));
-	task.max_call = child + 1;
-	if (child < 1 || job)
+	int child = static_cast<int>(workers.size());
+	child = min(child, job->schedule(child + 1) - 1);
+	if (child < 1 || atomic_exchange(&on_worker, OnBusy) != OnIdle)
 	{
-		task.call(start, stop);
+		job->call(job->start, job->stop);
 		return;
 	}
 
-	acquire_lock(&lock_pool);
-	job = new SyncJob(start, stop, &task);
 	for (int i = 0; i < child; ++i)
 		workers[i].assign(job);
 	job->call(false);
 	log_assert(job->index >= job->stop);
-	release_lock(&lock_pool);
+	atomic_exchange(&on_worker, OnIdle);
 
 	int finished = atomic_load(&(job->finished));
 	int active = atomic_load(&(job->active));
@@ -605,20 +575,30 @@ void SyncImpl::submit(int start, int stop, SyncTask& task)
 			release_lock(&lock_work);
 		}
 	}
-
-	job->subref();
-	acquire_lock(&lock_pool);
-	job = nullptr;
-	release_lock(&lock_pool);
 }
 }
 
 #	endif
 }
 
-#endif
+#else
 
-//////////////////// SyncPool ////////////////////
+namespace gk
+{
+SyncJob::SyncJob()
+	: id(-1), max_call(INT_MAX), start(0), stop(0) { }
+
+SyncJob::~SyncJob() { }
+
+SyncJob* SyncJob::set(int from, int to)
+{
+	index = start = from;
+	stop = to;
+	return this;
+}
+}
+
+#endif
 
 namespace gk
 {
@@ -642,37 +622,29 @@ SyncPool::~SyncPool()
 
 int SyncPool::set(int size)
 {
-#	if HAVE_PARALLEL_FRAMEWORK
+#if HAVE_PARALLEL_FRAMEWORK
 	size = impl->set(size);
-#	endif
+#endif
 	return size;
 }
 
 
 int SyncPool::get()
 {
-#	if HAVE_PARALLEL_FRAMEWORK
+#if HAVE_PARALLEL_FRAMEWORK
 	return impl->set(INT_MIN);
-#	else
+#else
 	return 1;
-#	endif
+#endif
 }
 
 
-void SyncPool::submit(int start, int stop, SyncTask& task)
+void SyncPool::submit(SyncJob* job)
 {
-	if (stop <= start)
-		return;
-	if (stop == start + 1)
-	{
-		task.call(start, stop);
-		return;
-	}
-
-#	if HAVE_PARALLEL_FRAMEWORK
-	impl->submit(start, stop, task);
-#	else
-	task.call(start, stop);
-#	endif
+#if HAVE_PARALLEL_FRAMEWORK
+	impl->submit(job);
+#else
+	job->call(job->start, job->stop);
+#endif
 }
 }

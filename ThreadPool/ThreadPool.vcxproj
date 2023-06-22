@@ -169,6 +169,7 @@
   <ItemGroup>
     <ClInclude Include="atomic.hpp" />
     <ClInclude Include="asyncpool.hpp" />
+    <ClInclude Include="atomic1.hpp" />
     <ClInclude Include="syncpool.hpp" />
     <ClInclude Include="type.hpp" />
   </ItemGroup>

@@ -3,9 +3,9 @@
 #include <cstdio>
 
 #if defined _M_X64 || defined __x86_64__ || defined __aarch64__ || defined _M_ARM64
-#	define GK_M_X64 1
+#	define GK_M_64 1
 #else
-#	define GK_M_X64 0
+#	define GK_M_64 0
 #endif
 
 #if defined __i386__ || defined __x86_64__ || defined _M_IX86 || defined _M_X64
@@ -56,7 +56,7 @@ IMPORTANT: always use the same order of defines
 	- Available on Windows Vista and later
 */
 #ifndef HAVE_PARALLEL_FRAMEWORK
-#	if defined _WIN32
+#	if defined _MSC_VER
 #		define HAVE_PARALLEL_FRAMEWORK 2
 #	elif defined __GNUC__
 #		define HAVE_PARALLEL_FRAMEWORK 1
@@ -66,12 +66,12 @@ IMPORTANT: always use the same order of defines
 #endif
 
 #if HAVE_PARALLEL_FRAMEWORK == 0
-#	pragma message("HAVE_PARALLEL_FRAMEWORK => HAVE_NONE")
+// #	pragma message("HAVE_PARALLEL_FRAMEWORK => HAVE_NONE")
 #elif HAVE_PARALLEL_FRAMEWORK == 1
-#	pragma message("HAVE_PARALLEL_FRAMEWORK => HAVE_PTHREADS_PF")
+// #	pragma message("HAVE_PARALLEL_FRAMEWORK => HAVE_PTHREADS_PF")
 #	define HAVE_PTHREADS_PF
 #elif HAVE_PARALLEL_FRAMEWORK == 2
-#	pragma message("HAVE_PARALLEL_FRAMEWORK => HAVE_WIN32_THREAD")
+// #	pragma message("HAVE_PARALLEL_FRAMEWORK => HAVE_WIN32_THREAD")
 #	define HAVE_WIN32_THREAD
 #else
 #	error must select one implementation

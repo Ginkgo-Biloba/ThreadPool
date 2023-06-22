@@ -1,24 +1,39 @@
 ﻿#pragma once
-#include <climits>
+#include "atomic.hpp"
 
 namespace gk
 {
 namespace details
 {
+class SyncWorker;
 class SyncImpl;
 }
 
-class SyncTask
+class SyncJob : public RefCount<SyncJob>
 {
+	friend class details::SyncWorker;
+	friend class details::SyncImpl;
+
+	int id;
+	// current work index
+	int index, nstripe;
+	// number of threads worked / completed on  this job
+	int active, completed, finished;
+
+	int call(bool spawned);
+	int schedule(int n);
+
+protected:
+	virtual ~SyncJob();
+
 public:
 	// max submit this times
 	// i.e. max use such many threads
 	int max_call;
+	int start, stop;
 
-	SyncTask()
-		: max_call(INT_MAX) { }
-	virtual void call(int start, int stop) = 0;
-	virtual ~SyncTask() {};
+	SyncJob();
+	virtual void call(int from, int to) = 0;
 };
 
 
@@ -42,7 +57,7 @@ public:
 	// get the number of threads, including the main thread
 	int get();
 
-	void submit(int start, int stop, SyncTask& task);
+	void submit(SyncJob* job);
 };
 
 }
