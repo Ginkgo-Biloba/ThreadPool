@@ -75,7 +75,7 @@ static void draw_mandelbrot(Mat& m, double x0, double y0, double ppi, int start,
 	}
 }
 
-class Mandelbrot : public gk::SyncJob
+class Mandelbrot : public SyncJob
 {
 	Mat& m;
 	int rows, cols;
@@ -112,12 +112,11 @@ void draw(double ox, double oy, double radius, int size, SyncPool& pool)
 {
 	Mat img(size, size);
 	char buf[128];
-	SyncJob* m = new Mandelbrot(img, ox, oy, radius);
+	RefPtr<SyncJob> m = new Mandelbrot(img, ox, oy, radius);
 	m->start = 0;
 	m->stop = size;
 	pool.submit(m);
 	sprintf(buf, "mandelbrot_%f.ppm", radius);
-	m->subref();
 	if (saveppm)
 		ppm_write(img, buf);
 }
@@ -167,16 +166,16 @@ int main()
 	else
 	{
 		AsyncPool pool;
-		vector<AsyncTask*> tasks;
+		vector<RefPtr<AsyncTask>> tasks;
 		for (size_t i = 0; i < 6; ++i)
 			pool.set(nums[i]);
-		tasks.push_back(new MandelAsync(size, -0.75, 0, 1.5));
+		RefPtr<AsyncTask> t1 = new MandelAsync(size, -0.75, 0, 1.5);
+		pool.submit(t1);
 		for (int i = 2; i < 7; ++i)
 			tasks.push_back(new MandelAsync(size, x, y, pow(0.2, i - 1)));
 		pool.submit(tasks.data(), tasks.size());
-		for (auto& t : tasks)
-			t->subref();
 		tasks.clear();
+		t1->wait();
 		pool.wait();
 	}
 	sum_tick = clock() - sum_tick;

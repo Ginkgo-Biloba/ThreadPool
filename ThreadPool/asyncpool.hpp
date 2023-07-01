@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "atomic.hpp"
+#include "type.hpp"
 
 namespace gk
 {
@@ -31,12 +31,12 @@ public:
 	// -1/0 for default number
 	int set(int size);
 
-	void submit(AsyncTask* task);
-	void submit(AsyncTask** tasks, size_t len);
+	void submit(RefPtr<AsyncTask> const& task);
+	void submit(RefPtr<AsyncTask>* tasks, size_t len);
 	void wait();
 };
 
-class AsyncTask : public RefCount<AsyncTask>
+class AsyncTask : public RefCount
 {
 	friend class details::AsyncImpl;
 	friend class details::AsyncWorker;
@@ -50,14 +50,12 @@ class AsyncTask : public RefCount<AsyncTask>
 	CONDITION_VARIABLE cond;
 #endif
 
-protected:
-	virtual ~AsyncTask();
-
 public:
 	// start from 0. use for debug
 	int id;
 
 	AsyncTask();
+	virtual ~AsyncTask();
 	virtual void call() = 0;
 	void wait();
 };

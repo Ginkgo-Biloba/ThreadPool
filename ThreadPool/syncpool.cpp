@@ -5,9 +5,9 @@
 #endif
 
 #include "syncpool.hpp"
-#include "atomic.hpp"
-#include <cstring>
 #include <vector>
+#include <cstring>
+#include <cstdint>
 #undef small
 #undef min
 #undef max
@@ -29,11 +29,13 @@ SyncJob::SyncJob()
 	: max_call(INT_MAX), start(0), stop(0)
 {
 	id = atomic_fetch_add(&sJobIndex, 1);
+	log_info("job %d(%p) has been created\n", id, this);
 }
 
 SyncJob::~SyncJob()
 {
-	log_assert(atomic_load(&finished));
+	log_assert(active == completed);
+	log_assert(finished);
 	log_info("job %d(%p) has been deleted\n", id, this);
 }
 
@@ -50,7 +52,7 @@ int SyncJob::schedule(int n)
 	log_assert(stop < INT_MAX - stripe + start);
 	active = completed = finished = 0;
 	log_info(
-		"job %d(%p) has been created [%d, %d) nstripe %d \n",
+		"job %d(%p) has been schedule [%d, %d) nstripe %d \n",
 		id, this, start, stop, nstripe);
 	return nstripe;
 }
@@ -107,7 +109,7 @@ public:
 	SyncImpl();
 	~SyncImpl();
 	int set(int n);
-	void submit(SyncJob* job);
+	void submit(RefPtr<SyncJob> const& job);
 
 	// no need to use PTP_CALLBACK_INSTANCE and PTP_WORK
 	static VOID CALLBACK Func(PTP_CALLBACK_INSTANCE, PVOID vp_job, PTP_WORK)
@@ -146,7 +148,6 @@ SyncImpl::SyncImpl()
 	num_worker = 0;
 }
 
-
 SyncImpl::~SyncImpl()
 {
 	// wait for any previously scheduled tasks to complete, but stop accepting new ones
@@ -156,7 +157,6 @@ SyncImpl::~SyncImpl()
 	TpDestroyCallbackEnviron(&callback_environ);
 	CloseThreadpool(pool);
 }
-
 
 int SyncImpl::set(int size)
 {
@@ -175,21 +175,21 @@ int SyncImpl::set(int size)
 	return curr + 1;
 }
 
-
-void SyncImpl::submit(SyncJob* job)
+void SyncImpl::submit(RefPtr<SyncJob> const& job)
 {
 	int child = num_worker;
 	child = min(child, job->schedule(child + 1) - 1);
 	if (child < 1)
 	{
 		job->call(job->start, job->stop);
+		job->finished = 1;
 		return;
 	}
 
 	AcquireSRWLockExclusive(&lock_pool);
 	do
 	{
-		TP_WORK* work = CreateThreadpoolWork(Func, job, &callback_environ);
+		TP_WORK* work = CreateThreadpoolWork(Func, job.get(), &callback_environ);
 		if (work == NULL)
 		{
 			log_error("SyncImpl: CreateThreadpoolWork failed, err = %d",
@@ -201,11 +201,13 @@ void SyncImpl::submit(SyncJob* job)
 		for (int i = 0; i < num_worker; ++i)
 			SubmitThreadpoolWork(work);
 		job->call(true);
-		log_info("SyncImpl: WaitForThreadpoolWorkCallbacks for job %d(%p)\n", job->id, job);
+		log_info(
+			"SyncImpl: WaitForThreadpoolWorkCallbacks for job %d\n",
+			job->id);
 		WaitForThreadpoolWorkCallbacks(work, FALSE);
 		CloseThreadpoolWork(work);
 		job->finished = 1;
-		log_info("SyncImpl: done for job %d(%p)\n", job->id, job);
+		log_info("SyncImpl: done for job %d\n", job->id);
 	} while (0);
 	ReleaseSRWLockExclusive(&lock_pool);
 }
@@ -230,7 +232,7 @@ class SyncWorker
 
 public:
 	SyncImpl* pool;
-	SyncJob* job;
+	RefPtr<SyncJob> job;
 
 	// the index in the vector `SyncImpl::workers'
 	int id;
@@ -252,7 +254,7 @@ public:
 	// for vector
 	SyncWorker(SyncWorker&&);
 	~SyncWorker();
-	void assign(SyncJob* rhs);
+	void assign(RefPtr<SyncJob> const& rhs);
 	void loop();
 };
 
@@ -274,7 +276,7 @@ class SyncImpl
 
 	int on_worker;
 	int max_worker;
-	vector<SyncWorker> workers; // 子线程
+	vector<SyncWorker> workers;
 
 public:
 #		if defined HAVE_PTHREADS_PF
@@ -288,7 +290,7 @@ public:
 	SyncImpl();
 	~SyncImpl();
 	int set(int size);
-	void submit(SyncJob* job);
+	void submit(RefPtr<SyncJob> const& job);
 };
 
 //////////////////// SyncWorker ////////////////////
@@ -313,7 +315,7 @@ static unsigned __stdcall Worker_Func(void* vp_worker)
 #		endif
 
 SyncWorker::SyncWorker(SyncImpl* p)
-	: pool(p), job(nullptr), owned(1), stopped(0), wake_signal(0)
+	: pool(p), owned(1), stopped(0), wake_signal(0)
 {
 	id = atomic_fetch_add(&sWorkerIndex, 1);
 	log_assert(p && "must work with SyncImpl");
@@ -347,7 +349,20 @@ SyncWorker::SyncWorker(SyncImpl* p)
 
 SyncWorker::SyncWorker(SyncWorker&& rhs)
 {
-	memcpy(this, &rhs, sizeof(*this));
+	pool = rhs.pool;
+	job.swap(rhs.job);
+	id = rhs.id;
+	owned = rhs.owned;
+	stopped = rhs.stopped;
+	wake_signal = rhs.wake_signal;
+	lock_job = rhs.lock_job;
+	cond_job = rhs.cond_job;
+#		if defined HAVE_PTHREADS_PF
+	posix_thread = rhs.posix_thread;
+#		elif defined HAVE_WIN32_THREAD
+	win32_thread = rhs.win32_thread;
+	win32_id = rhs.win32_id;
+#		endif
 	rhs.owned = 0;
 }
 
@@ -358,8 +373,7 @@ SyncWorker::~SyncWorker()
 	log_info("SyncWorker: worker %d is being deleted\n", id);
 	acquire_lock(&lock_job);
 	log_assert(!stopped && "repeate stop");
-	if (job)
-		job->subref();
+	// job.reset();
 	stopped = 1;
 	wake_signal = 1;
 	release_lock(&lock_job);
@@ -379,16 +393,14 @@ SyncWorker::~SyncWorker()
 	log_info("SyncWorker: worker %d has been deleted\n", id);
 }
 
-void SyncWorker::assign(SyncJob* rhs)
+void SyncWorker::assign(RefPtr<SyncJob> const& rhs)
 {
 	log_assert(!stopped && "has stopped");
-	log_info("worker %d is assigned job %d(%p)\n", id, rhs->id, rhs);
+	log_info("worker %d is assigned job %d\n", id, rhs->id);
 	acquire_lock(&lock_job);
 	// make sure that previous job is finished
 	log_assert(!job || job->finished);
-	if (job)
-		job->subref();
-	job = rhs->addref();
+	job = rhs;
 	wake_signal = 1;
 	release_lock(&lock_job);
 	wake_cond(&cond_job);
@@ -396,13 +408,10 @@ void SyncWorker::assign(SyncJob* rhs)
 
 void SyncWorker::loop()
 {
-	// 立即执行？可能没有主线程安排任务速度快
-	// log_assert(!job && "worker start just now");
 	log_info("worker %d start now\n", id);
-	SyncJob* J;
-
 	while (!stopped)
 	{
+		RefPtr<SyncJob> J;
 		log_info("worker %d loop (pause)...\n", id);
 		for (int i = 0; i < ActiveWait; ++i)
 		{
@@ -417,15 +426,14 @@ void SyncWorker::loop()
 			log_info("worker %d wait (sleep)...\n", id);
 			sleep_lock(&cond_job, &lock_job);
 		}
-		J = job;
-		job = nullptr;
+		J.swap(job);
 		wake_signal = 0;
 		release_lock(&lock_job);
 
 		if (!stopped && J && (atomic_load(&(J->start)) < J->stop))
 		{
 			int active = atomic_fetch_add(&(J->active), 1);
-			log_info("worker %d do job %d(%p) as %d\n", id, J->id, J, active);
+			log_info("worker %d do job %d as %d\n", id, J->id, active);
 			J->call(true);
 
 			int completed = atomic_fetch_add(&(J->completed), 1) + 1;
@@ -436,7 +444,7 @@ void SyncWorker::loop()
 				int finished = atomic_exchange(&(J->finished), 1);
 				if (!finished)
 				{
-					log_info("worker %d mark job %d(%p) finished and notify the main thread\n", id, J->id, J);
+					log_info("worker %d mark job %d finished and notify the main thread\n", id, J->id);
 					acquire_lock(&(pool->lock_work));
 					release_lock(&(pool->lock_work));
 					wake_cond(&(pool->cond_work));
@@ -446,12 +454,10 @@ void SyncWorker::loop()
 		else
 		{
 			if (J)
-				log_info("worker %d get job %d(%p) which has been finished\n", id, J->id, J);
+				log_info("worker %d get job %d which has been finished\n", id, J->id);
 			else
-				log_info("worker %d no more jobs\n", id);
+				log_info("worker %d has no more jobs\n", id);
 		}
-		if (J)
-			J->subref();
 	}
 }
 
@@ -518,13 +524,14 @@ int SyncImpl::set(int size)
 	return curr + 1;
 }
 
-void SyncImpl::submit(SyncJob* job)
+void SyncImpl::submit(RefPtr<SyncJob> const& job)
 {
 	int child = static_cast<int>(workers.size());
 	child = min(child, job->schedule(child + 1) - 1);
 	if (child < 1 || atomic_exchange(&on_worker, OnBusy) != OnIdle)
 	{
 		job->call(job->start, job->stop);
+		job->finished = 1;
 		return;
 	}
 
@@ -539,33 +546,33 @@ void SyncImpl::submit(SyncJob* job)
 	// have finished job, or just the main thread is working
 	if (finished || (active == 0))
 	{
-		log_info("SyncImpl: no worker in progress for job %d(%p) active %d\n", job->id, job, active);
+		log_info("SyncImpl: no worker in progress for job %d active %d\n", job->id, active);
 		job->finished = 1;
 	}
 	else
 	{
-		log_info("SyncImpl: loop (pause) for job %d(%p)\n", job->id, job);
+		log_info("SyncImpl: loop (pause) for job %d\n", job->id);
 		// don't spin too much in any case (inaccurate getTickCount())
 		for (int i = 0; i < ActiveWait; ++i)
 		{
 			finished = atomic_load(&(job->finished));
 			if (finished)
 			{
-				log_info("SyncImpl: job %d(%p) is finished by others (pause)\n", job->id, job);
+				log_info("SyncImpl: job %d is finished by others (pause)\n", job->id);
 				break;
 			}
 			yield_pause(16);
 		}
 		if (!finished)
 		{
-			log_info("SyncImpl: wait (sleep) for job %d(%p)\n", job->id, job);
+			log_info("SyncImpl: wait (sleep) for job %d\n", job->id);
 			acquire_lock(&lock_work);
 			for (;;)
 			{
 				finished = atomic_load(&(job->finished));
 				if (finished)
 				{
-					log_info("SyncImpl: job %d(%p) is finished by others (wait)\n", job->id, job);
+					log_info("SyncImpl: job %d is finished by others (wait)\n", job->id);
 					break;
 				}
 				log_info("SyncImpl: wait (sleep)...\n");
@@ -589,13 +596,6 @@ SyncJob::SyncJob()
 	: id(-1), max_call(INT_MAX), start(0), stop(0) { }
 
 SyncJob::~SyncJob() { }
-
-SyncJob* SyncJob::set(int from, int to)
-{
-	index = start = from;
-	stop = to;
-	return this;
-}
 }
 
 #endif
@@ -611,14 +611,12 @@ SyncPool::SyncPool()
 #endif
 }
 
-
 SyncPool::~SyncPool()
 {
 #if HAVE_PARALLEL_FRAMEWORK
 	delete impl;
 #endif
 }
-
 
 int SyncPool::set(int size)
 {
@@ -627,7 +625,6 @@ int SyncPool::set(int size)
 #endif
 	return size;
 }
-
 
 int SyncPool::get()
 {
@@ -638,9 +635,10 @@ int SyncPool::get()
 #endif
 }
 
-
-void SyncPool::submit(SyncJob* job)
+void SyncPool::submit(RefPtr<SyncJob> const& job)
 {
+	if (!job)
+		return;
 #if HAVE_PARALLEL_FRAMEWORK
 	impl->submit(job);
 #else

@@ -57,7 +57,7 @@ void AsyncTask::wait()
 	acquire_lock(&(lock));
 	while (num_finish != num_submit)
 	{
-		log_assert(num_finish < num_submit);
+		// log_assert(num_finish < num_submit);
 		sleep_lock(&cond, &lock);
 	}
 	release_lock(&(lock));
@@ -75,14 +75,13 @@ class AsyncWorker
 
 public:
 	AsyncImpl* pool;
-	AsyncTask* task;
 	int id, owned, stop;
 
 #	if defined HAVE_PTHREADS_PF
 	pthread_t posix_thread;
 #	elif defined HAVE_WIN32_THREAD
-	uintptr_t win32_thread;
 	unsigned win32_id;
+	uintptr_t win32_thread;
 #	endif
 
 	AsyncWorker(AsyncImpl* pool);
@@ -105,7 +104,7 @@ public:
 	int max_worker;
 	int num_submit, num_finish;
 	// do not use shared_ptr and unique_ptr
-	deque<AsyncTask*> tasks;
+	deque<RefPtr<AsyncTask>> tasks;
 	vector<AsyncWorker> workers;
 
 #	if defined HAVE_PTHREADS_PF
@@ -125,8 +124,8 @@ public:
 	AsyncImpl();
 	~AsyncImpl();
 	int set(int size);
-	void submit(AsyncTask* task);
-	void submit(AsyncTask** task, int len);
+	void submit(RefPtr<AsyncTask> const& task);
+	void submit(RefPtr<AsyncTask>* task, int len);
 	void wait();
 };
 
@@ -152,7 +151,7 @@ static unsigned __stdcall Worker_Func(void* vp_worker)
 #	endif
 
 AsyncWorker::AsyncWorker(AsyncImpl* p)
-	: pool(p), task(0), owned(1), stop(0)
+	: pool(p), owned(1), stop(0)
 {
 	log_assert(pool);
 	id = atomic_fetch_add(&sWorkerIndex, 1);
@@ -182,7 +181,16 @@ AsyncWorker::AsyncWorker(AsyncImpl* p)
 
 AsyncWorker::AsyncWorker(AsyncWorker&& rhs)
 {
-	memcpy(this, &rhs, sizeof(*this));
+	pool = rhs.pool;
+	id = rhs.id;
+	owned = rhs.owned;
+	stop = rhs.stop;
+#	if defined HAVE_PTHREADS_PF
+	posix_thread = rhs.posix_thread;
+#	elif defined HAVE_WIN32_THREAD
+	win32_id = rhs.win32_id;
+	win32_thread = rhs.win32_thread;
+#	endif
 	rhs.owned = 0;
 }
 
@@ -200,7 +208,6 @@ AsyncWorker::~AsyncWorker()
 	WaitForSingleObject(reinterpret_cast<HANDLE>(win32_thread), INFINITE);
 	CloseHandle(reinterpret_cast<HANDLE>(win32_thread));
 #	endif
-	log_assert(!task);
 	log_info("AsyncWorker: worker %d(%p) has been deleted\n", id, this);
 }
 
@@ -209,8 +216,8 @@ void AsyncWorker::loop()
 	log_info("AsyncWorker: worker %d start now\n", id);
 	for (;;)
 	{
+		RefPtr<AsyncTask> task;
 		acquire_lock(&(pool->lock_task));
-		task = nullptr;
 		while (!stop && pool->tasks.empty())
 		{
 			log_info("AsyncWorker: worker %d wait (sleep)...\n", id);
@@ -239,7 +246,6 @@ void AsyncWorker::loop()
 			id, task->id, finish, submit);
 		if (finish == submit)
 			wake_all_cond(&(task->cond));
-		task->subref();
 		acquire_lock(&(pool->lock_wait));
 		++(pool->num_finish);
 		release_lock(&(pool->lock_wait));
@@ -293,10 +299,7 @@ AsyncImpl::~AsyncImpl()
 	release_lock(&lock_task);
 	wake_all_cond(&cond_task);
 	while (len--)
-	{
-		log_assert(!(workers[len].task));
 		workers.pop_back();
-	}
 	release_lock(&(lock_pool));
 #	if defined HAVE_PTHREADS_PF
 	log_assert(!pthread_cond_destroy(&cond_task));
@@ -328,9 +331,10 @@ int AsyncImpl::set(int size)
 	return curr;
 }
 
-void AsyncImpl::submit(AsyncTask* task)
+void AsyncImpl::submit(RefPtr<AsyncTask> const& task)
 {
-	log_assert(task);
+	if (!task)
+		return;
 	acquire_lock(&lock_pool);
 	log_assert(workers.size());
 	release_lock(&lock_pool);
@@ -341,12 +345,12 @@ void AsyncImpl::submit(AsyncTask* task)
 	++(task->num_submit);
 	release_lock(&(task->lock));
 	acquire_lock(&(lock_task));
-	tasks.push_back(task->addref());
+	tasks.push_back(task);
 	release_lock(&(lock_task));
 	wake_cond(&(cond_task));
 }
 
-void AsyncImpl::submit(AsyncTask** task, int len)
+void AsyncImpl::submit(RefPtr<AsyncTask>* task, int len)
 {
 	if (len < 1)
 		return;
@@ -357,18 +361,20 @@ void AsyncImpl::submit(AsyncTask** task, int len)
 	num_submit += len;
 	release_lock(&lock_wait);
 	acquire_lock(&(lock_task));
-	for (int i = 0; i < len; ++i)
+	int i = 0;
+	for (; i < len; ++i)
 	{
-		log_assert(task[i]);
+		if (!task[i])
+			continue;
 		acquire_lock(&(task[i]->lock));
 		++(task[i]->num_submit);
 		release_lock(&(task[i]->lock));
-		tasks.push_back(task[i]->addref());
+		tasks.push_back(task[i]);
 	}
 	release_lock(&(lock_task));
-	if (len == 1)
+	if (i == 1)
 		wake_cond(&(cond_task));
-	else
+	else if (i > 1)
 		wake_all_cond(&(cond_task));
 }
 
@@ -413,12 +419,12 @@ int AsyncPool::set(int size)
 	return impl->set(size);
 }
 
-void AsyncPool::submit(AsyncTask* task)
+void AsyncPool::submit(RefPtr<AsyncTask> const& task)
 {
 	impl->submit(task);
 }
 
-void AsyncPool::submit(AsyncTask** tasks, size_t len)
+void AsyncPool::submit(RefPtr<AsyncTask>* tasks, size_t len)
 {
 	impl->submit(tasks, static_cast<int>(len));
 }
@@ -438,6 +444,8 @@ AsyncTask::AsyncTask()
 
 AsyncTask::~AsyncTask() { }
 
+void AsyncTask::wait() { }
+
 AsyncPool::AsyncPool()
 	: impl(nullptr) { }
 
@@ -455,13 +463,13 @@ int AsyncPool::set(int)
 	return 0;
 }
 
-void AsyncPool::submit(AsyncTask* task)
+void AsyncPool::submit(RefPtr<AsyncTask> const& task)
 {
 	log_assert(task);
 	task->call();
 }
 
-void AsyncPool::submit(AsyncTask** task, size_t len)
+void AsyncPool::submit(RefPtr<AsyncTask>* task, size_t len)
 {
 	for (size_t i = 0; i < len; ++i)
 	{
@@ -470,10 +478,8 @@ void AsyncPool::submit(AsyncTask** task, size_t len)
 	}
 }
 
-void AsyncPool::wait()
-{
-	return;
-}
+void AsyncPool::wait() { }
+
 }
 
 #endif

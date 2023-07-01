@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "atomic.hpp"
+#include "type.hpp"
 
 namespace gk
 {
@@ -9,7 +9,7 @@ class SyncWorker;
 class SyncImpl;
 }
 
-class SyncJob : public RefCount<SyncJob>
+class SyncJob : public RefCount
 {
 	friend class details::SyncWorker;
 	friend class details::SyncImpl;
@@ -17,14 +17,11 @@ class SyncJob : public RefCount<SyncJob>
 	int id;
 	// current work index
 	int index, nstripe;
-	// number of threads worked / completed on  this job
+	// number of threads worked / completed on it
 	int active, completed, finished;
 
 	int call(bool spawned);
 	int schedule(int n);
-
-protected:
-	virtual ~SyncJob();
 
 public:
 	// max submit this times
@@ -33,9 +30,9 @@ public:
 	int start, stop;
 
 	SyncJob();
+	virtual ~SyncJob();
 	virtual void call(int from, int to) = 0;
 };
-
 
 class SyncPool
 {
@@ -57,7 +54,7 @@ public:
 	// get the number of threads, including the main thread
 	int get();
 
-	void submit(SyncJob* job);
+	void submit(RefPtr<SyncJob> const& job);
 };
 
 }

@@ -32,7 +32,7 @@ ConstructorInitializerAllOnOneLineOrOnePerLine : true
 Cpp11BracedListStyle : true
 
 # ColumnLimit : 0
-MaxEmptyLinesToKeep : 2
+MaxEmptyLinesToKeep : 1
 KeepEmptyLinesAtTheStartOfBlocks : false
 SortIncludes : false
 ...

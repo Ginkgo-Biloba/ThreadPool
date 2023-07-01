@@ -1,12 +1,8 @@
 ﻿#pragma once
 
-#include <cstdint>
-#include <type_traits>
-#include "type.hpp"
+#if defined _MSC_VER //|| defined __MINGW32__
 
-
-#if defined _WIN32 && defined _MSC_VER
-
+#	include <type_traits>
 // https://docs.microsoft.com/en-us/cpp/intrinsics/intrinsics-available-on-all-architectures?view=vs-2019
 #	include <intrin.h>
 
@@ -19,17 +15,19 @@ namespace gk
 		template <typename T>                                      \
 		GK_Atomic_EnableIf(sz) atomic_##func(T* ptr, mstype val)   \
 		{                                                          \
+			static_assert(sizeof(T) == sizeof(mstype), "");          \
 			return static_cast<T>(                                   \
 				msfunc(reinterpret_cast<volatile mstype*>(ptr), val)); \
 		}
 
-#	define GK_Atomic_Define(sz, mstype,                                  \
+// clang-format off
+#	define GK_Atomic_Define(sz, mstype,                                   \
 		opAdd, opAnd, opOr, opXor, opXch, opCas)                            \
-		GK_Atomic_DefineSize(sz, mstype, fetch_add, opAdd);                 \
-		GK_Atomic_DefineSize(sz, mstype, fetch_and, opAnd);                 \
-		GK_Atomic_DefineSize(sz, mstype, fetch_or, opOr);                   \
+		GK_Atomic_DefineSize(sz, mstype, fetch_add, opAdd)                  \
+		GK_Atomic_DefineSize(sz, mstype, fetch_and, opAnd)                  \
+		GK_Atomic_DefineSize(sz, mstype, fetch_or, opOr)                    \
 		GK_Atomic_DefineSize(sz, mstype, fetch_xor, opXor)                  \
-			GK_Atomic_DefineSize(sz, mstype, exchange, opXch);                \
+			GK_Atomic_DefineSize(sz, mstype, exchange, opXch)                 \
 		template <typename T>                                               \
 		GK_Atomic_EnableIf(sz)                                              \
 			atomic_compare_exchange(T* ptr, mstype expected, mstype val)      \
@@ -49,14 +47,14 @@ namespace gk
 			opXch(reinterpret_cast<volatile mstype*>(ptr), val);              \
 		}
 
-#	if !defined __MINGW32__
+#	if !defined(__MINGW32__)
 GK_Atomic_Define(1, char,
 	_InterlockedExchangeAdd8,
 	_InterlockedAnd8,
 	_InterlockedOr8,
 	_InterlockedXor8,
 	_InterlockedExchange8,
-	_InterlockedCompareExchange8);
+	_InterlockedCompareExchange8)
 
 GK_Atomic_Define(2, short,
 	_InterlockedExchangeAdd16,
@@ -64,7 +62,7 @@ GK_Atomic_Define(2, short,
 	_InterlockedOr16,
 	_InterlockedXor16,
 	_InterlockedExchange16,
-	_InterlockedCompareExchange16);
+	_InterlockedCompareExchange16)
 #	endif
 
 GK_Atomic_Define(4, long,
@@ -73,17 +71,18 @@ GK_Atomic_Define(4, long,
 	_InterlockedOr,
 	_InterlockedXor,
 	_InterlockedExchange,
-	_InterlockedCompareExchange);
+	_InterlockedCompareExchange)
 
-#	if GK_M_64
+#	if defined _M_X64 || defined _M_ARM64
 GK_Atomic_Define(8, __int64,
 	_InterlockedExchangeAdd64,
 	_InterlockedAnd64,
 	_InterlockedOr64,
 	_InterlockedXor64,
 	_InterlockedExchange64,
-	_InterlockedCompareExchange64);
+	_InterlockedCompareExchange64)
 #	endif
+// clang-format on
 
 #	undef GK_Atomic_Define
 #	undef GK_Atomic_DefineSize
@@ -138,47 +137,3 @@ namespace gk
 }
 
 #endif
-
-
-namespace gk
-{
-/** use RefCount with T, only alloc once
- * replace stack allocate with new on heap and T*
- * replace operator= with addref
- * replace delete or de-constructor with subref
- */
-template <typename T>
-class RefCount
-{
-	RefCount(RefCount&&) = delete;
-	RefCount(RefCount const&) = delete;
-	RefCount& operator=(RefCount&&) = delete;
-	RefCount& operator=(RefCount const&) = delete;
-
-protected:
-	int refcount;
-
-	virtual ~RefCount() {};
-
-public:
-	RefCount()
-		: refcount(1) { }
-
-	T* addref()
-	{
-		static_assert(
-			std::is_base_of<RefCount<T>, T>::value,
-			"make T derived from RefCount<T>");
-		atomic_fetch_add(&refcount, 1);
-		return static_cast<T*>(this);
-	}
-
-	void subref()
-	{
-		int ref = atomic_fetch_add(&refcount, -1);
-		log_assert(ref > 0);
-		if (ref == 1)
-			delete this;
-	}
-};
-}
