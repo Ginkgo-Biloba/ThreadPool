@@ -52,7 +52,7 @@ int SyncJob::schedule(int n)
 	log_assert(stop < INT_MAX - stripe + start);
 	active = completed = finished = 0;
 	log_info(
-		"job %d(%p) has been schedule [%d, %d) nstripe %d \n",
+		"job %d(%p) has been scheduled [%d, %d) nstripe %d \n",
 		id, this, start, stop, nstripe);
 	return nstripe;
 }

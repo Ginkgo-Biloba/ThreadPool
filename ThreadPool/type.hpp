@@ -2,6 +2,7 @@
 
 #include "atomic.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <type_traits>
 
 #if defined __i386__ || defined __x86_64__ || defined _M_IX86 || defined _M_X64
@@ -9,27 +10,29 @@
 #endif
 
 #ifdef _MSC_VER
+#	include <intrin.h>
 #	define GK_Func __FUNCSIG__
-#	define GK_Trap abort()
+#	define GK_Trap __debugbreak()
 #elif defined __GNUC__
 #	define GK_Func __PRETTY_FUNCTION__
 #	define GK_Trap __builtin_trap()
 #else
-#	define GK_Func "Can_Not_Get_Func_Name"
+#	define GK_Func __FUNC__
+#	define GK_Trap abort()
 #endif
 
 #define log_info(...)                            \
 	do {                                           \
 		char _buf[1024];                             \
 		snprintf(_buf, sizeof(_buf), ##__VA_ARGS__); \
-		fputs(_buf, stderr);                         \
+		fputs(_buf, stdout);                         \
 	} while (0)
 
 #define log_error(...)                                         \
 	do {                                                         \
 		char _buf[1024];                                           \
 		size_t _idx = snprintf(_buf, sizeof(_buf) - 16,            \
-			"ERROR on file %s, func %s, line %d\n",                  \
+			"ERROR on file %s, func %s, line %d: ",                  \
 			__FILE__, GK_Func, __LINE__);                            \
 		snprintf(_buf + _idx, sizeof(_buf) - _idx, ##__VA_ARGS__); \
 		fputs(_buf, stderr);                                       \
