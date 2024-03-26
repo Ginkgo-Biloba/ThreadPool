@@ -1,18 +1,15 @@
 ﻿#pragma once
-#include "type.hpp"
+#include "refptr.hpp"
 
-namespace gk
-{
-namespace details
-{
+namespace gk {
+namespace details {
 class AsyncImpl;
 class AsyncWorker;
 }
 
 class AsyncTask;
 
-class AsyncPool
-{
+class AsyncPool {
 	friend class AsyncTask;
 	details::AsyncImpl* impl;
 
@@ -36,8 +33,7 @@ public:
 	void wait();
 };
 
-class AsyncTask : public RefCount
-{
+class AsyncTask : public RefObj {
 	friend class details::AsyncImpl;
 	friend class details::AsyncWorker;
 

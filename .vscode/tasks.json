@@ -8,7 +8,7 @@
 			"type": "process",
 			"command": "${env:mingw}\\bin\\g++.exe",
 			"args": [
-				"-D_WIN32_WINNT=_WIN32_WINNT_WIN6",
+				"-D_WIN32_WINNT=_WIN32_WINNT_WIN7",
 				"-std=c++11",
 				"-msse4.2",
 				// "-m32",
@@ -24,6 +24,8 @@
 				"-Wno-format",
 				// "-Wshadow-field",
 				// "-fsanitize=undefined",
+				"-shared-libstdc++",
+				"-shared-libgcc",
 				"-o",
 				"ThreadPool.exe",
 				"ThreadPool\\main.cpp",

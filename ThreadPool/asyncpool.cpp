@@ -17,8 +17,7 @@ using std::vector;
 #	elif defined HAVE_WIN32_THREAD
 #	endif
 
-namespace gk
-{
+namespace gk {
 static int sTaskIndex = 0;
 static int sWorkerIndex = 0;
 
@@ -32,8 +31,8 @@ AsyncTask::AsyncTask()
 	pthread_mutex_init(&lock, NULL);
 	pthread_cond_init(&cond, NULL);
 #	elif defined HAVE_WIN32_THREAD
-	InitializeSRWLock(&lock);
-	InitializeConditionVariable(&cond);
+	lock = SRWLOCK_INIT;
+	cond = CONDITION_VARIABLE_INIT;
 #	endif
 	log_info("AsyncTask: task %d(%p) has been created\n", id, this);
 }
@@ -55,20 +54,17 @@ AsyncTask::~AsyncTask()
 void AsyncTask::wait()
 {
 	acquire_lock(&(lock));
-	while (num_finish != num_submit)
-	{
+	while (num_finish != num_submit) {
 		// log_assert(num_finish < num_submit);
 		sleep_lock(&cond, &lock);
 	}
 	release_lock(&(lock));
 }
 
-namespace details
-{
+namespace details {
 //////////////////// AsyncWorker ////////////////////
 
-class AsyncWorker
-{
+class AsyncWorker {
 	AsyncWorker(AsyncWorker const&) = delete;
 	AsyncWorker& operator=(AsyncWorker const&) = delete;
 	AsyncWorker& operator=(AsyncWorker&&) = delete;
@@ -93,8 +89,7 @@ public:
 
 //////////////////// AsyncImpl ////////////////////
 
-class AsyncImpl
-{
+class AsyncImpl {
 	AsyncImpl(AsyncImpl&&) = delete;
 	AsyncImpl(AsyncImpl const&) = delete;
 	AsyncImpl& operator=(AsyncImpl&&) = delete;
@@ -160,16 +155,14 @@ AsyncWorker::AsyncWorker(AsyncImpl* p)
 	int err = 0;
 #	if defined HAVE_PTHREADS_PF
 	err |= pthread_create(&posix_thread, NULL, Worker_Func, this);
-	if (err != 0)
-	{
+	if (err != 0) {
 		log_error("worker %d(%p) can not create posix_thread, err = %d\n", id, this, err);
 		return;
 	}
 #	elif defined HAVE_WIN32_THREAD
 	// for initialize CRT runtime, dot not use CreateThread
 	win32_thread = _beginthreadex(NULL, 0, Worker_Func, this, 0, &win32_id);
-	if (win32_thread == 0)
-	{
+	if (win32_thread == 0) {
 		err = GetLastError();
 		log_error(
 			"worker %d(%p) can not create thread, handle = %zx, win32_id = %u, err = %x\n",
@@ -214,17 +207,14 @@ AsyncWorker::~AsyncWorker()
 void AsyncWorker::loop()
 {
 	log_info("AsyncWorker: worker %d start now\n", id);
-	for (;;)
-	{
+	for (;;) {
 		RefPtr<AsyncTask> task;
 		acquire_lock(&(pool->lock_task));
-		while (!stop && pool->tasks.empty())
-		{
+		while (!stop && pool->tasks.empty()) {
 			log_info("AsyncWorker: worker %d wait (sleep)...\n", id);
 			sleep_lock(&(pool->cond_task), &(pool->lock_task));
 		}
-		if (!stop)
-		{
+		if (!stop) {
 			task = pool->tasks.front();
 			if (task)
 				pool->tasks.pop_front();
@@ -259,7 +249,7 @@ void AsyncWorker::loop()
 AsyncImpl::AsyncImpl()
 	: num_submit(0), num_finish(0)
 {
-	log_info(GK_Func);
+	log_info(GK_FUNC);
 #	if defined HAVE_PTHREADS_PF
 	int err = 0;
 	err |= pthread_mutex_init(&lock_pool, NULL);
@@ -317,8 +307,7 @@ int AsyncImpl::set(int size)
 {
 	acquire_lock(&(lock_pool));
 	int curr = static_cast<int>(workers.size());
-	if (size != INT_MIN)
-	{
+	if (size != INT_MIN) {
 		if (size <= 0)
 			size = max_worker / 2;
 		size = min(size, max_worker);
@@ -361,28 +350,27 @@ void AsyncImpl::submit(RefPtr<AsyncTask>* task, int len)
 	num_submit += len;
 	release_lock(&lock_wait);
 	acquire_lock(&(lock_task));
-	int i = 0;
-	for (; i < len; ++i)
-	{
+	int ok = 0;
+	for (int i = 0; i < len; ++i) {
 		if (!task[i])
 			continue;
+		++ok;
 		acquire_lock(&(task[i]->lock));
 		++(task[i]->num_submit);
 		release_lock(&(task[i]->lock));
 		tasks.push_back(task[i]);
 	}
 	release_lock(&(lock_task));
-	if (i == 1)
+	if (ok == 1)
 		wake_cond(&(cond_task));
-	else if (i > 1)
+	else if (ok > 1)
 		wake_all_cond(&(cond_task));
 }
 
 void AsyncImpl::wait()
 {
 	acquire_lock(&lock_wait);
-	while (num_finish != num_submit)
-	{
+	while (num_finish != num_submit) {
 		// log_assert(num_finish < num_submit);
 		sleep_lock(&cond_wait, &lock_wait);
 	}
@@ -437,8 +425,7 @@ void AsyncPool::wait()
 
 #else
 
-namespace gk
-{
+namespace gk {
 AsyncTask::AsyncTask()
 	: num_submit(0), num_finish(0), id(-1) { }
 
@@ -471,8 +458,7 @@ void AsyncPool::submit(RefPtr<AsyncTask> const& task)
 
 void AsyncPool::submit(RefPtr<AsyncTask>* task, size_t len)
 {
-	for (size_t i = 0; i < len; ++i)
-	{
+	for (size_t i = 0; i < len; ++i) {
 		log_assert(task[i]);
 		task[i]->call();
 	}

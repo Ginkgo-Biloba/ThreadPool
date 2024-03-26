@@ -12,23 +12,19 @@ typedef unsigned char uchar;
 
 static int saveppm = 0;
 
-class Mat
-{
+class Mat {
 public:
 	uchar* data;
 	int rows, cols;
 
 	Mat(int r, int c)
 	{
-		if (r * c > 0)
-		{
+		if (r * c > 0) {
 			data = static_cast<uchar*>(malloc(r * c * sizeof(data[0])));
 			log_assert(data);
 			rows = r;
 			cols = c;
-		}
-		else
-		{
+		} else {
 			data = nullptr;
 			rows = cols = 0;
 		}
@@ -43,21 +39,19 @@ public:
 	}
 };
 
-static void draw_mandelbrot(Mat& m, double x0, double y0, double ppi, int start, int stop)
+static void draw_mandelbrot(Mat& m,
+	double x0, double y0, double ppi, int start, int stop)
 {
 	int const iteration = 300;
-	for (int h = start; h < stop; ++h)
-	{
+	for (int h = start; h < stop; ++h) {
 		uchar* M = m.data + h * m.cols;
 		double Y0 = y0 + h * ppi;
-		for (int w = 0; w < m.cols; ++w)
-		{
+		for (int w = 0; w < m.cols; ++w) {
 			double X0 = x0 + w * ppi;
 			double x = 0, y = 0, t;
 			double z = x * x + y * y;
 			int iter = 0;
-			while (z < 4 && iter < iteration)
-			{
+			while (z < 4 && iter < iteration) {
 				++iter;
 				t = x * x - y * y + X0;
 				y = 2 * x * y + Y0;
@@ -75,8 +69,7 @@ static void draw_mandelbrot(Mat& m, double x0, double y0, double ppi, int start,
 	}
 }
 
-class Mandelbrot : public SyncJob
-{
+class Mandelbrot : public SyncJob {
 	Mat& m;
 	int rows, cols;
 	double x0, y0, ppi;
@@ -121,8 +114,7 @@ void draw(double ox, double oy, double radius, int size, SyncPool& pool)
 		ppm_write(img, buf);
 }
 
-class MandelAsync : public AsyncTask
-{
+class MandelAsync : public AsyncTask {
 	Mat m;
 	int rows, cols;
 	double rad, x0, y0, ppi;
@@ -154,17 +146,14 @@ int main()
 	int nums[6] = {0, 4, 2, 5, 3, 6};
 	int size = 2000;
 	double x = 0.27322626, y = 0.595153338;
-	if (1)
-	{
+	if (1) {
 		SyncPool pool;
 		for (size_t i = 0; i < 6; ++i)
 			pool.set(nums[i]);
 		draw(-0.75, 0, 1.5, size, pool);
 		for (int i = 2; i < 7; ++i)
 			draw(x, y, pow(0.2, i - 1), size, pool);
-	}
-	else
-	{
+	} else {
 		AsyncPool pool;
 		vector<RefPtr<AsyncTask>> tasks;
 		for (size_t i = 0; i < 6; ++i)
