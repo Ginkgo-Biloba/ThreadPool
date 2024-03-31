@@ -1,139 +1,313 @@
 ﻿#pragma once
 
-#if defined _MSC_VER //|| defined __MINGW32__
+#include "fwd.hpp"
 
-#	include <type_traits>
+#include <type_traits>
+#include <cstdint>
+
+#define GK_ATOMIC_ENABLE_IF(sz) \
+	typename std::enable_if<std::is_integral<T>::value && sizeof(T) == sz, int>::type = 0
+
+#if defined _MSC_VER || defined __MINGW32__
+
 // https://docs.microsoft.com/en-us/cpp/intrinsics/intrinsics-available-on-all-architectures?view=vs-2019
 #	include <intrin.h>
 
-namespace gk
-{
-#	define GK_Atomic_EnableIf(sz) \
-		typename std::enable_if<std::is_integral<T>::value && sizeof(T) == sz, T>::type
+namespace gk {
 
-#	define GK_Atomic_DefineSize(sz, mstype, func, msfunc)       \
-		template <typename T>                                      \
-		GK_Atomic_EnableIf(sz) atomic_##func(T* ptr, mstype val)   \
-		{                                                          \
-			static_assert(sizeof(T) == sizeof(mstype), "");          \
-			return static_cast<T>(                                   \
-				msfunc(reinterpret_cast<volatile mstype*>(ptr), val)); \
+#	define GK_ATOMIC_SIZE(sz, itype, func, msfunc)             \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>            \
+		GK_ALWAYS_INLINE T atomic_##func(                         \
+			T volatile* __restrict ptr, itype val)                  \
+		{                                                         \
+			return static_cast<T>(                                  \
+				msfunc(reinterpret_cast<itype volatile*>(ptr), val)); \
+		}                                                         \
+		GK_ALWAYS_INLINE void atomic_##func##_##sz(               \
+			void volatile* __restrict ptr,                          \
+			void const* __restrict val, void* __restrict res)       \
+		{                                                         \
+			*reinterpret_cast<itype*>(res) = msfunc(                \
+				reinterpret_cast<itype volatile*>(ptr),               \
+				*reinterpret_cast<itype const*>(val));                \
 		}
 
-// clang-format off
-#	define GK_Atomic_Define(sz, mstype,                                   \
-		opAdd, opAnd, opOr, opXor, opXch, opCas)                            \
-		GK_Atomic_DefineSize(sz, mstype, fetch_add, opAdd)                  \
-		GK_Atomic_DefineSize(sz, mstype, fetch_and, opAnd)                  \
-		GK_Atomic_DefineSize(sz, mstype, fetch_or, opOr)                    \
-		GK_Atomic_DefineSize(sz, mstype, fetch_xor, opXor)                  \
-			GK_Atomic_DefineSize(sz, mstype, exchange, opXch)                 \
-		template <typename T>                                               \
-		GK_Atomic_EnableIf(sz)                                              \
-			atomic_compare_exchange(T* ptr, mstype expected, mstype val)      \
-		{                                                                   \
-			return static_cast<T>(                                            \
-				opCas(reinterpret_cast<volatile mstype*>(ptr), val, expected)); \
-		}                                                                   \
-		template <typename T>                                               \
-		GK_Atomic_EnableIf(sz) atomic_load(T* ptr)                          \
-		{                                                                   \
-			return static_cast<T>(                                            \
-				opOr(reinterpret_cast<volatile mstype*>(ptr), 0));              \
-		}                                                                   \
-		template <typename T, GK_Atomic_EnableIf(sz) = 0>                   \
-		void atomic_store(T* ptr, mstype val)                               \
-		{                                                                   \
-			opXch(reinterpret_cast<volatile mstype*>(ptr), val);              \
+#	define GK_ATOMIC_DEFINE(                                       \
+		sz, itype, opAdd, opAnd, opOr, opXor, opXch, opCas)           \
+		GK_ATOMIC_SIZE(sz, itype, fetch_add, opAdd)                   \
+		GK_ATOMIC_SIZE(sz, itype, fetch_and, opAnd)                   \
+		GK_ATOMIC_SIZE(sz, itype, fetch_or, opOr)                     \
+		GK_ATOMIC_SIZE(sz, itype, fetch_xor, opXor)                   \
+		GK_ATOMIC_SIZE(sz, itype, exchange, opXch)                    \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>                \
+		GK_ALWAYS_INLINE void atomic_store(                           \
+			T volatile* __restrict ptr, itype val)                      \
+		{                                                             \
+			opXch(reinterpret_cast<itype volatile*>(ptr), val);         \
+		}                                                             \
+		/*template <typename T, GK_ATOMIC_ENABLE_IF(sz)>              \
+		GK_ALWAYS_INLINE T atomic_compare_exchange(                   \
+		  T volatile* __restrict ptr, itype cmp, itype val)           \
+		{                                                             \
+		  return static_cast<T>(                                      \
+		    opCas(reinterpret_cast<itype volatile*>(ptr), val, cmp)); \
+		}*/                                                           \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>                \
+		GK_ALWAYS_INLINE bool atomic_compare_exchange(                \
+			T volatile* __restrict ptr, T* __restrict cmp, itype val)   \
+		{                                                             \
+			itype cur = *cmp;                                           \
+			itype old = *cmp = opCas(                                   \
+				reinterpret_cast<itype volatile*>(ptr), val, cur);        \
+			return old == cur;                                          \
+		}                                                             \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>                \
+		GK_ALWAYS_INLINE T atomic_load(T volatile* __restrict ptr)    \
+		{                                                             \
+			return static_cast<T>(                                      \
+				opCas(reinterpret_cast<itype volatile*>(ptr), 0, 0));     \
+		}                                                             \
+		GK_ALWAYS_INLINE void atomic_store_##sz(                      \
+			void volatile* __restrict ptr, void const* __restrict val)  \
+		{                                                             \
+			opXch(reinterpret_cast<itype volatile*>(ptr),               \
+				*reinterpret_cast<itype const*>(val));                    \
+		}                                                             \
+		GK_ALWAYS_INLINE bool atomic_compare_exchange_##sz(           \
+			void volatile* __restrict ptr,                              \
+			void* __restrict cmp, void const* __restrict val)           \
+		{                                                             \
+			itype icmp = *reinterpret_cast<itype*>(cmp);                \
+			itype iold = opCas(                                         \
+				reinterpret_cast<itype volatile*>(ptr),                   \
+				*reinterpret_cast<itype const*>(val),                     \
+				*reinterpret_cast<itype const*>(cmp));                    \
+			*reinterpret_cast<itype*>(cmp) = iold;                      \
+			return iold == icmp;                                        \
+		}                                                             \
+		GK_ALWAYS_INLINE void atomic_load_##sz(                       \
+			void volatile* __restrict ptr, void* __restrict res)        \
+		{                                                             \
+			*reinterpret_cast<itype*>(res) = opCas(                     \
+				reinterpret_cast<itype volatile*>(ptr), 0, 0);            \
 		}
 
 #	if !defined(__MINGW32__)
-GK_Atomic_Define(1, char,
-	_InterlockedExchangeAdd8,
-	_InterlockedAnd8,
-	_InterlockedOr8,
-	_InterlockedXor8,
-	_InterlockedExchange8,
-	_InterlockedCompareExchange8)
+GK_ATOMIC_DEFINE(1, char, _InterlockedExchangeAdd8,
+	_InterlockedAnd8, _InterlockedOr8, _InterlockedXor8,
+	_InterlockedExchange8, _InterlockedCompareExchange8)
 
-GK_Atomic_Define(2, short,
-	_InterlockedExchangeAdd16,
-	_InterlockedAnd16,
-	_InterlockedOr16,
-	_InterlockedXor16,
-	_InterlockedExchange16,
-	_InterlockedCompareExchange16)
+GK_ATOMIC_DEFINE(2, short, _InterlockedExchangeAdd16,
+	_InterlockedAnd16, _InterlockedOr16, _InterlockedXor16,
+	_InterlockedExchange16, _InterlockedCompareExchange16)
 #	endif
 
-GK_Atomic_Define(4, long,
-	_InterlockedExchangeAdd,
-	_InterlockedAnd,
-	_InterlockedOr,
-	_InterlockedXor,
-	_InterlockedExchange,
-	_InterlockedCompareExchange)
+GK_ATOMIC_DEFINE(4, long, _InterlockedExchangeAdd,
+	_InterlockedAnd, _InterlockedOr, _InterlockedXor,
+	_InterlockedExchange, _InterlockedCompareExchange)
 
-#	if defined _M_X64 || defined _M_ARM64
-GK_Atomic_Define(8, __int64,
-	_InterlockedExchangeAdd64,
-	_InterlockedAnd64,
-	_InterlockedOr64,
-	_InterlockedXor64,
-	_InterlockedExchange64,
-	_InterlockedCompareExchange64)
+#	if defined _M_X64
+GK_ATOMIC_DEFINE(8, __int64, _InterlockedExchangeAdd64,
+	_InterlockedAnd64, _InterlockedOr64, _InterlockedXor64,
+	_InterlockedExchange64, _InterlockedCompareExchange64)
 #	endif
-// clang-format on
 
-#	undef GK_Atomic_Define
-#	undef GK_Atomic_DefineSize
-#	undef GK_Atomic_EnableIf
-}
+#	define GK_ATOMIC_BTS(sz, func, itype, msfunc)                  \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>                \
+		GK_ALWAYS_INLINE bool atomic_##func(                          \
+			T volatile* __restrict ptr, itype bit)                      \
+		{                                                             \
+			return msfunc(reinterpret_cast<itype volatile*>(ptr), bit); \
+		}                                                             \
+		GK_ALWAYS_INLINE bool atomic_##func##_##sz(                   \
+			void volatile* __restrict ptr, itype bit)                   \
+		{                                                             \
+			return msfunc(reinterpret_cast<itype volatile*>(ptr), bit); \
+		}
 
-#elif defined __GNUC__ && defined __ATOMIC_ACQ_REL
+#	ifdef _MSC_VER
+GK_ATOMIC_BTS(4, bts, long, _interlockedbittestandset)
+GK_ATOMIC_BTS(4, btr, long, _interlockedbittestandreset)
+GK_ATOMIC_BTS(8, bts, __int64, _interlockedbittestandset64)
+GK_ATOMIC_BTS(8, btr, __int64, _interlockedbittestandreset64)
+#	else
+GK_ATOMIC_BTS(4, bts, long, InterlockedBitTestAndSet)
+GK_ATOMIC_BTS(4, btr, long, InterlockedBitTestAndReset)
+GK_ATOMIC_BTS(8, bts, __int64, InterlockedBitTestAndSet64)
+GK_ATOMIC_BTS(8, btr, __int64, InterlockedBitTestAndReset64)
+#	endif
 
-// gcc >= 4.7
-// https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html
-
-namespace gk
-{
-// if get error: expected identifier before numeric constant
-// un-include C++ header <atomic>, or change the functions' name
-#	define atomic_fetch_add(ptr, val) __atomic_fetch_add(ptr, val, __ATOMIC_ACQ_REL)
-#	define atomic_fetch_and(ptr, val) __atomic_fetch_and(ptr, val, __ATOMIC_ACQ_REL)
-#	define atomic_fetch_or(ptr, val) __atomic_fetch_or(ptr, val, __ATOMIC_ACQ_REL)
-#	define atomic_fetch_xor(ptr, val) __atomic_fetch_xor(ptr, val, __ATOMIC_ACQ_REL)
-#	define atomic_exchange(ptr, val) __atomic_exchange_n(ptr, val, __ATOMIC_ACQ_REL)
-#	define atomic_load(ptr) __atomic_load_n(ptr, __ATOMIC_ACQUIRE)
-#	define atomic_store(ptr, val) __atomic_store_n(ptr, val, __ATOMIC_RELEASE)
-
-template <typename T>
-T atomic_compare_exchange(T* ptr, T comparand, T val)
-{
-	__atomic_compare_exchange_n(ptr, &comparand, val, false,
-		__ATOMIC_ACQ_REL, __ATOMIC_ACQ_REL);
-	return comparand;
-}
+#	undef GK_ATOMIC_BTS
+#	undef GK_ATOMIC_DEFINE
+#	undef GK_ATOMIC_SIZE
 }
 
 #elif defined __GNUC__
 
-// gcc >= 4.1.2. otherwise maybe(?) raise compile error
-// https://gcc.gnu.org/onlinedocs/gcc/_005f_005fsync-Builtins.html
+// https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html
 
-namespace gk
+namespace gk {
+
+#	define GK_ATOMIC_SIZE(sz, itype, func, gnu)                   \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>               \
+		GK_ALWAYS_INLINE T atomic_##func(T volatile* ptr, itype val) \
+		{                                                            \
+			return __atomic_##gnu(ptr, val, __ATOMIC_ACQ_REL);         \
+		}                                                            \
+		GK_ALWAYS_INLINE void atomic_##func##_##sz(                  \
+			void volatile* __restrict ptr,                             \
+			void const* __restrict val, void* __restrict res)          \
+		{                                                            \
+			*reinterpret_cast<itype*>(res) = __atomic_##gnu(           \
+				reinterpret_cast<itype volatile*>(ptr),                  \
+				*reinterpret_cast<itype const*>(val), __ATOMIC_ACQ_REL); \
+		}
+
+#	define GK_ATOMIC_DEFINE(sz, itype)                               \
+		GK_ATOMIC_SIZE(sz, itype, fetch_add, fetch_add)                 \
+		GK_ATOMIC_SIZE(sz, itype, fetch_and, fetch_and)                 \
+		GK_ATOMIC_SIZE(sz, itype, fetch_or, fetch_or)                   \
+		GK_ATOMIC_SIZE(sz, itype, fetch_xor, fetch_xor)                 \
+		GK_ATOMIC_SIZE(sz, itype, exchange, exchange_n)                 \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>                  \
+		GK_ALWAYS_INLINE void atomic_store(                             \
+			T volatile* __restrict ptr, itype val)                        \
+		{                                                               \
+			__atomic_store_n(ptr, val, __ATOMIC_RELEASE);                 \
+		}                                                               \
+		/*template <typename T, GK_ATOMIC_ENABLE_IF(sz)>                \
+		GK_ALWAYS_INLINE T atomic_compare_exchange(                     \
+		  T volatile* __restrict ptr, itype cmp, itype val)             \
+		{                                                               \
+		  __atomic_compare_exchange_n(                                  \
+		    ptr, &cmp, val, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE); \
+		  return cmp;                                                   \
+		}*/                                                             \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>                  \
+		GK_ALWAYS_INLINE bool atomic_compare_exchange(                  \
+			T volatile* __restrict ptr, T* __restrict cmp, itype val)     \
+		{                                                               \
+			bool res = __atomic_compare_exchange_n(                       \
+				ptr, cmp, val, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);  \
+			return res;                                                   \
+		}                                                               \
+		GK_ALWAYS_INLINE void atomic_store_##sz(                        \
+			void volatile* __restrict ptr, void const* __restrict val)    \
+		{                                                               \
+			__atomic_store(reinterpret_cast<itype volatile*>(ptr),        \
+				reinterpret_cast<itype const*>(val), __ATOMIC_RELEASE);     \
+		}                                                               \
+		GK_ALWAYS_INLINE bool atomic_compare_exchange_##sz(             \
+			void volatile* __restrict ptr,                                \
+			void* __restrict cmp, void const* __restrict val)             \
+		{                                                               \
+			return __atomic_compare_exchange(                             \
+				reinterpret_cast<itype volatile*>(ptr),                     \
+				reinterpret_cast<itype*>(cmp),                              \
+				reinterpret_cast<itype const*>(val),                        \
+				false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);                 \
+		}                                                               \
+		GK_ALWAYS_INLINE void atomic_load_##sz(                         \
+			void volatile* __restrict ptr, void* __restrict res)          \
+		{                                                               \
+			__atomic_load(reinterpret_cast<itype volatile*>(ptr),         \
+				reinterpret_cast<itype*>(res), __ATOMIC_ACQUIRE);           \
+		}
+
+GK_ATOMIC_DEFINE(1, uint8_t)
+GK_ATOMIC_DEFINE(2, uint16_t)
+GK_ATOMIC_DEFINE(4, uint32_t)
+GK_ATOMIC_DEFINE(8, uint64_t)
+
+template <typename T,
+	typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+GK_ALWAYS_INLINE T atomic_load(T volatile* ptr)
 {
-#	define atomic_fetch_add(ptr, val) __sync_fetch_and_add(ptr, val)
-#	define atomic_fetch_and(ptr, val) __sync_fetch_and_and(ptr, val)
-#	define atomic_fetch_or(ptr, val) __sync_fetch_and_or(ptr, val)
-#	define atomic_fetch_xor(ptr, val) __sync_fetch_and_xor(ptr, val)
-#	define atomic_exchange(ptr, val) __sync_lock_test_and_set(ptr, val)
-#	define atomic_compare_exchange(ptr, comparand, val) \
-		__sync_val_compare_and_swap(ptr, comparand, val)
-#	define atomic_load(ptr) __sync_fetch_and_or(ptr, 0)
-#	define atomic_store(ptr, val) __sync_lock_test_and_set(ptr, val)
+	return __atomic_load_n(ptr, __ATOMIC_ACQUIRE);
+}
 
-#	warning "no equivalent exchange operation is available"              \
-"__sync_lock_test_and_set is not a full barrier, use at your own risk"
+#	define GK_ATOMIC_BTS(sz, itype, rev, func, orand)                         \
+		template <typename T, GK_ATOMIC_ENABLE_IF(sz)>                           \
+		GK_ALWAYS_INLINE bool atomic_##func(                                     \
+			T volatile* __restrict ptr, itype bit)                                 \
+		{                                                                        \
+			itype mask = static_cast<itype>(1) << bit;                             \
+			itype old = __atomic_fetch_##orand(ptr, rev mask, __ATOMIC_ACQ_REL);   \
+			return old & mask;                                                     \
+		}                                                                        \
+		GK_ALWAYS_INLINE                                                         \
+		bool atomic_##func##_##sz(void volatile* __restrict ptr, itype bit)      \
+		{                                                                        \
+			itype mask = static_cast<itype>(1) << bit;                             \
+			itype old = __atomic_fetch_##orand(                                    \
+				reinterpret_cast<itype volatile*>(ptr), rev mask, __ATOMIC_ACQ_REL); \
+			return old & mask;                                                     \
+		}
+
+GK_ATOMIC_BTS(4, uint32_t, , bts, or)
+GK_ATOMIC_BTS(8, uint64_t, , bts, or)
+GK_ATOMIC_BTS(4, uint32_t, ~, btr, and)
+GK_ATOMIC_BTS(8, uint64_t, ~, btr, and)
+
+#	undef GK_ATOMIC_BTS
+#	undef GK_ATOMIC_DEFINE
+#	undef GK_ATOMIC_SIZE
 }
 
 #endif
+
+#undef GK_ATOMIC_ENABLE_IF
+
+namespace gk {
+
+#if GK_IS_64BIT
+#	define GK_ATOMIC_SIZE 8
+#else
+#	define GK_ATOMIC_SIZE 4
+#endif
+
+#define GK_ATOMIC_DEFINE(func)                                    \
+	GK_ALWAYS_INLINE void atomic_##func##_ptr(                      \
+		void volatile* __restrict ptr,                                \
+		void const* __restrict val, void* __restrict res)             \
+	{                                                               \
+		(GK_CONCAT(atomic_##func##_, GK_ATOMIC_SIZE)(ptr, val, res)); \
+	}
+
+GK_ATOMIC_DEFINE(fetch_add)
+GK_ATOMIC_DEFINE(fetch_and)
+GK_ATOMIC_DEFINE(fetch_or)
+GK_ATOMIC_DEFINE(fetch_xor)
+GK_ATOMIC_DEFINE(exchange)
+
+GK_ALWAYS_INLINE void atomic_store_ptr(
+	void volatile* __restrict ptr, void const* __restrict val)
+{
+	(GK_CONCAT(atomic_store_, GK_ATOMIC_SIZE)(ptr, val));
+}
+GK_ALWAYS_INLINE bool atomic_compare_exchange_ptr(
+	void volatile* ptr, void* __restrict cmp, void const* val)
+{
+	return GK_CONCAT(atomic_compare_exchange_, GK_ATOMIC_SIZE)(ptr, cmp, val);
+}
+GK_ALWAYS_INLINE
+void atomic_load_ptr(void volatile* __restrict ptr, void* __restrict res)
+{
+	(GK_CONCAT(atomic_load_, GK_ATOMIC_SIZE)(ptr, res));
+}
+GK_ALWAYS_INLINE
+bool atomic_bts_ptr(void volatile* __restrict ptr, uintptr_t bit)
+{
+	return atomic_bts(
+		reinterpret_cast<uintptr_t volatile*>(ptr), bit);
+}
+GK_ALWAYS_INLINE
+bool atomic_btr_ptr(void volatile* __restrict ptr, uintptr_t bit)
+{
+	return atomic_btr(
+		reinterpret_cast<uintptr_t volatile*>(ptr), bit);
+}
+
+#undef GK_ATOMIC_DEFINE
+#undef GK_ATOMIC_SIZE
+}

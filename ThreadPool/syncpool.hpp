@@ -1,16 +1,13 @@
 ﻿#pragma once
-#include "type.hpp"
+#include "refptr.hpp"
 
-namespace gk
-{
-namespace details
-{
+namespace gk {
+namespace details {
 class SyncWorker;
 class SyncImpl;
 }
 
-class SyncJob : public RefCount
-{
+class SyncJob : public RefObj {
 	friend class details::SyncWorker;
 	friend class details::SyncImpl;
 
@@ -34,8 +31,8 @@ public:
 	virtual void call(int from, int to) = 0;
 };
 
-class SyncPool
-{
+class SyncPool {
+	uint8_t storage[128];
 	details::SyncImpl* impl;
 
 	SyncPool(SyncPool const&) = delete;

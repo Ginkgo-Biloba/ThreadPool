@@ -14,9 +14,11 @@ NamespaceIndentation : None
 TabWidth : 2
 UseTab : AlignWithSpaces
 
-BreakBeforeBraces : Allman
+# BreakBeforeBraces : Allman
 BreakBeforeBinaryOperators : All
 BreakBeforeTernaryOperators : true
+AlignConsecutiveBitFields : Consecutive
+AlignConsecutiveMacros : Consecutive
 AlignTrailingComments : true
 AllowAllArgumentsOnNextLine : true
 AllowAllConstructorInitializersOnNextLine : true
@@ -24,15 +26,16 @@ AllowAllParametersOfDeclarationOnNextLine : true
 AllowShortBlocksOnASingleLine : true
 AllowShortCaseLabelsOnASingleLine : true
 AllowShortEnumsOnASingleLine : true
-AllowShortFunctionsOnASingleLine : Empty
-AllowShortIfStatementsOnASingleLine : true
+AllowShortFunctionsOnASingleLine : All
+AllowShortIfStatementsOnASingleLine : WithoutElse
 AllowShortLoopsOnASingleLine : true
 AllowShortLambdasOnASingleLine : true
 ConstructorInitializerAllOnOneLineOrOnePerLine : true
 Cpp11BracedListStyle : true
 
-# ColumnLimit : 0
+# ColumnLimit : 80
 MaxEmptyLinesToKeep : 1
 KeepEmptyLinesAtTheStartOfBlocks : false
 SortIncludes : false
+SortUsingDeclarations : false
 ...

@@ -1,8 +1,8 @@
 ﻿#include <ctime>
 #include <cmath>
-#include <algorithm>
 #include <fstream>
 #include <vector>
+#include <cstdlib>
 #include "asyncpool.hpp"
 #include "syncpool.hpp"
 using namespace gk;
@@ -12,23 +12,19 @@ typedef unsigned char uchar;
 
 static int saveppm = 0;
 
-class Mat
-{
+class Mat {
 public:
 	uchar* data;
 	int rows, cols;
 
 	Mat(int r, int c)
 	{
-		if (r * c > 0)
-		{
+		if (r * c > 0) {
 			data = static_cast<uchar*>(malloc(r * c * sizeof(data[0])));
-			log_assert(data);
+			GK_ASSERT(data);
 			rows = r;
 			cols = c;
-		}
-		else
-		{
+		} else {
 			data = nullptr;
 			rows = cols = 0;
 		}
@@ -43,21 +39,19 @@ public:
 	}
 };
 
-static void draw_mandelbrot(Mat& m, double x0, double y0, double ppi, int start, int stop)
+static void draw_mandelbrot(Mat& m,
+	double x0, double y0, double ppi, int start, int stop)
 {
 	int const iteration = 300;
-	for (int h = start; h < stop; ++h)
-	{
+	for (int h = start; h < stop; ++h) {
 		uchar* M = m.data + h * m.cols;
 		double Y0 = y0 + h * ppi;
-		for (int w = 0; w < m.cols; ++w)
-		{
+		for (int w = 0; w < m.cols; ++w) {
 			double X0 = x0 + w * ppi;
 			double x = 0, y = 0, t;
 			double z = x * x + y * y;
 			int iter = 0;
-			while (z < 4 && iter < iteration)
-			{
+			while (z < 4 && iter < iteration) {
 				++iter;
 				t = x * x - y * y + X0;
 				y = 2 * x * y + Y0;
@@ -75,8 +69,7 @@ static void draw_mandelbrot(Mat& m, double x0, double y0, double ppi, int start,
 	}
 }
 
-class Mandelbrot : public SyncJob
-{
+class Mandelbrot : public SyncJob {
 	Mat& m;
 	int rows, cols;
 	double x0, y0, ppi;
@@ -87,7 +80,7 @@ public:
 	{
 		x0 = ox - radius;
 		y0 = oy - radius;
-		ppi = 2 * radius / std::min(rows, cols);
+		ppi = 2 * radius / min(rows, cols);
 	}
 	void call(int from, int to) override
 	{
@@ -121,8 +114,7 @@ void draw(double ox, double oy, double radius, int size, SyncPool& pool)
 		ppm_write(img, buf);
 }
 
-class MandelAsync : public AsyncTask
-{
+class MandelAsync : public AsyncTask {
 	Mat m;
 	int rows, cols;
 	double rad, x0, y0, ppi;
@@ -133,7 +125,7 @@ public:
 	{
 		x0 = ox - radius;
 		y0 = oy - radius;
-		ppi = 2 * radius / std::min(rows, cols);
+		ppi = 2 * radius / min(rows, cols);
 	}
 
 	void call() override
@@ -150,25 +142,29 @@ int main()
 {
 	saveppm = 0;
 	puts("├Hello, World┤");
-	double sum_tick = clock();
+	double ifreq = 1e3 / getTickFrequency();
+	int64_t tick = 0;
 	int nums[6] = {0, 4, 2, 5, 3, 6};
 	int size = 2000;
 	double x = 0.27322626, y = 0.595153338;
-	if (1)
-	{
+	if (0) {
 		SyncPool pool;
-		for (size_t i = 0; i < 6; ++i)
+		for (size_t i = 0; i < 6; ++i) {
 			pool.set(nums[i]);
+			Sleep(100);
+		}
+		tick = getTickCount();
 		draw(-0.75, 0, 1.5, size, pool);
 		for (int i = 2; i < 7; ++i)
 			draw(x, y, pow(0.2, i - 1), size, pool);
-	}
-	else
-	{
+	} else {
 		AsyncPool pool;
 		vector<RefPtr<AsyncTask>> tasks;
-		for (size_t i = 0; i < 6; ++i)
+		for (size_t i = 0; i < 6; ++i) {
 			pool.set(nums[i]);
+			Sleep(100);
+		}
+		tick = getTickCount();
 		RefPtr<AsyncTask> t1 = new MandelAsync(size, -0.75, 0, 1.5);
 		pool.submit(t1);
 		for (int i = 2; i < 7; ++i)
@@ -178,6 +174,5 @@ int main()
 		t1->wait();
 		pool.wait();
 	}
-	sum_tick = clock() - sum_tick;
-	printf("main: %f ms\n", sum_tick * 1e3 / CLOCKS_PER_SEC);
+	printf("main: %f ms\n", ifreq * static_cast<double>(getTickCount() - tick));
 }

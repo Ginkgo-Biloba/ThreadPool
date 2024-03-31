@@ -1,24 +1,18 @@
 ﻿#include "asyncpool.hpp"
 #include <cstring>
+#include <climits>
 #include <vector>
 #include <deque>
 #undef small
 #undef min
 #undef max
 #undef abs
-using std::deque;
-using std::max;
-using std::min;
-using std::vector;
 
-#if HAVE_PARALLEL_FRAMEWORK
+#if defined __linux__
+#elif defined _WIN32
+#endif
 
-#	if defined HAVE_PTHREADS_PF
-#	elif defined HAVE_WIN32_THREAD
-#	endif
-
-namespace gk
-{
+namespace gk {
 static int sTaskIndex = 0;
 static int sWorkerIndex = 0;
 
@@ -28,47 +22,37 @@ AsyncTask::AsyncTask()
 	: num_submit(0), num_finish(0)
 {
 	id = atomic_fetch_add(&sTaskIndex, 1);
-#	if defined HAVE_PTHREADS_PF
-	pthread_mutex_init(&lock, NULL);
-	pthread_cond_init(&cond, NULL);
-#	elif defined HAVE_WIN32_THREAD
-	InitializeSRWLock(&lock);
-	InitializeConditionVariable(&cond);
-#	endif
-	log_info("AsyncTask: task %d(%p) has been created\n", id, this);
+	lock = SRWLOCK_INIT;
+	cond = CONDITION_VARIABLE_INIT;
+	GK_LOG_INFO(
+		"AsyncTask: task %d(%p) has been created\n",
+		id, static_cast<void*>(this));
 }
 
 AsyncTask::~AsyncTask()
 {
-	acquire_lock(&(lock));
-	log_assert(num_finish == num_submit);
-	release_lock(&(lock));
-#	if defined HAVE_PTHREADS_PF
-	pthread_cond_destroy(&cond);
-	pthread_mutex_destroy(&lock);
-#	elif defined HAVE_WIN32_THREAD
-	// nothing to do
-#	endif
-	log_info("AsyncTask: task %d(%p) has been deleted\n", id, this);
+	AcquireSRWLockExclusive(&(lock));
+	GK_ASSERT(num_finish == num_submit);
+	ReleaseSRWLockExclusive(&(lock));
+	GK_LOG_INFO(
+		"AsyncTask: task %d(%p) has been deleted\n",
+		id, static_cast<void*>(this));
 }
 
 void AsyncTask::wait()
 {
-	acquire_lock(&(lock));
-	while (num_finish != num_submit)
-	{
-		// log_assert(num_finish < num_submit);
-		sleep_lock(&cond, &lock);
+	AcquireSRWLockExclusive(&(lock));
+	while (num_finish != num_submit) {
+		// GK_ASSERT(num_finish < num_submit);
+		SleepConditionVariableSRW(&cond, &lock, INFINITE, 0);
 	}
-	release_lock(&(lock));
+	ReleaseSRWLockExclusive(&(lock));
 }
 
-namespace details
-{
+namespace details {
 //////////////////// AsyncWorker ////////////////////
 
-class AsyncWorker
-{
+class AsyncWorker {
 	AsyncWorker(AsyncWorker const&) = delete;
 	AsyncWorker& operator=(AsyncWorker const&) = delete;
 	AsyncWorker& operator=(AsyncWorker&&) = delete;
@@ -77,12 +61,12 @@ public:
 	AsyncImpl* pool;
 	int id, owned, stop;
 
-#	if defined HAVE_PTHREADS_PF
+#if defined __linux__
 	pthread_t posix_thread;
-#	elif defined HAVE_WIN32_THREAD
+#elif defined _WIN32
 	unsigned win32_id;
 	uintptr_t win32_thread;
-#	endif
+#endif
 
 	AsyncWorker(AsyncImpl* pool);
 	// for vector
@@ -93,8 +77,7 @@ public:
 
 //////////////////// AsyncImpl ////////////////////
 
-class AsyncImpl
-{
+class AsyncImpl {
 	AsyncImpl(AsyncImpl&&) = delete;
 	AsyncImpl(AsyncImpl const&) = delete;
 	AsyncImpl& operator=(AsyncImpl&&) = delete;
@@ -104,22 +87,14 @@ public:
 	int max_worker;
 	int num_submit, num_finish;
 	// do not use shared_ptr and unique_ptr
-	deque<RefPtr<AsyncTask>> tasks;
-	vector<AsyncWorker> workers;
+	std::deque<RefPtr<AsyncTask>> tasks;
+	std::vector<AsyncWorker> workers;
 
-#	if defined HAVE_PTHREADS_PF
-	pthread_mutex_t lock_pool;
-	pthread_mutex_t lock_wait;
-	pthread_mutex_t lock_task;
-	pthread_cond_t cond_wait;
-	pthread_cond_t cond_task;
-#	elif defined HAVE_WIN32_THREAD
 	SRWLOCK lock_pool;
 	SRWLOCK lock_wait;
 	SRWLOCK lock_task;
 	CONDITION_VARIABLE cond_wait;
 	CONDITION_VARIABLE cond_task;
-#	endif
 
 	AsyncImpl();
 	~AsyncImpl();
@@ -131,7 +106,7 @@ public:
 
 //////////////////// AsyncWorker ////////////////////
 
-#	if defined HAVE_PTHREADS_PF
+#if defined __linux__
 
 static void* Worker_Func(void* vp_worker)
 {
@@ -139,7 +114,7 @@ static void* Worker_Func(void* vp_worker)
 	return vp_worker; // just return a value
 }
 
-#	elif defined HAVE_WIN32_THREAD
+#elif defined _WIN32
 
 static unsigned __stdcall Worker_Func(void* vp_worker)
 {
@@ -148,35 +123,36 @@ static unsigned __stdcall Worker_Func(void* vp_worker)
 	return worker->id; // just return a value
 }
 
-#	endif
+#endif
 
 AsyncWorker::AsyncWorker(AsyncImpl* p)
 	: pool(p), owned(1), stop(0)
 {
-	log_assert(pool);
+	GK_ASSERT(pool);
 	id = atomic_fetch_add(&sWorkerIndex, 1);
-	log_info("AsyncWorker: worker %d(%p) is being created\n", id, this);
+	GK_LOG_INFO(
+		"AsyncWorker: worker %d(%p) is being created\n", id, static_cast<void*>(this));
 
 	int err = 0;
-#	if defined HAVE_PTHREADS_PF
+#if defined __linux__
 	err |= pthread_create(&posix_thread, NULL, Worker_Func, this);
-	if (err != 0)
-	{
-		log_error("worker %d(%p) can not create posix_thread, err = %d\n", id, this, err);
+	if (err != 0) {
+		GK_LOG_ERROR(
+			"worker %d(%p) can not create posix_thread, err = %d\n",
+			id, static_cast<void*>(this), err);
 		return;
 	}
-#	elif defined HAVE_WIN32_THREAD
+#elif defined _WIN32
 	// for initialize CRT runtime, dot not use CreateThread
 	win32_thread = _beginthreadex(NULL, 0, Worker_Func, this, 0, &win32_id);
-	if (win32_thread == 0)
-	{
+	if (win32_thread == 0) {
 		err = GetLastError();
-		log_error(
+		GK_LOG_ERROR(
 			"worker %d(%p) can not create thread, handle = %zx, win32_id = %u, err = %x\n",
-			id, this, static_cast<size_t>(win32_thread), win32_id, err);
+			id, static_cast<void*>(this), static_cast<size_t>(win32_thread), win32_id, err);
 		return;
 	}
-#	endif
+#endif
 }
 
 AsyncWorker::AsyncWorker(AsyncWorker&& rhs)
@@ -185,12 +161,12 @@ AsyncWorker::AsyncWorker(AsyncWorker&& rhs)
 	id = rhs.id;
 	owned = rhs.owned;
 	stop = rhs.stop;
-#	if defined HAVE_PTHREADS_PF
+#if defined __linux__
 	posix_thread = rhs.posix_thread;
-#	elif defined HAVE_WIN32_THREAD
+#elif defined _WIN32
 	win32_id = rhs.win32_id;
 	win32_thread = rhs.win32_thread;
-#	endif
+#endif
 	rhs.owned = 0;
 }
 
@@ -198,60 +174,60 @@ AsyncWorker::~AsyncWorker()
 {
 	if (!owned)
 		return;
-	acquire_lock(&(pool->lock_task));
+	AcquireSRWLockExclusive(&(pool->lock_task));
 	stop = 1;
-	release_lock(&(pool->lock_task));
-	wake_all_cond(&(pool->cond_task));
-#	if defined HAVE_PTHREADS_PF
+	ReleaseSRWLockExclusive(&(pool->lock_task));
+	WakeAllConditionVariable(&(pool->cond_task));
+#if defined __linux__
 	pthread_join(posix_thread, NULL);
-#	elif defined HAVE_WIN32_THREAD
+#elif defined _WIN32
 	WaitForSingleObject(reinterpret_cast<HANDLE>(win32_thread), INFINITE);
 	CloseHandle(reinterpret_cast<HANDLE>(win32_thread));
-#	endif
-	log_info("AsyncWorker: worker %d(%p) has been deleted\n", id, this);
+#endif
+	GK_LOG_INFO(
+		"AsyncWorker: worker %d(%p) has been deleted\n",
+		id, static_cast<void*>(this));
 }
 
 void AsyncWorker::loop()
 {
-	log_info("AsyncWorker: worker %d start now\n", id);
-	for (;;)
-	{
+	GK_LOG_INFO("AsyncWorker: worker %d start now\n", id);
+	for (;;) {
 		RefPtr<AsyncTask> task;
-		acquire_lock(&(pool->lock_task));
-		while (!stop && pool->tasks.empty())
-		{
-			log_info("AsyncWorker: worker %d wait (sleep)...\n", id);
-			sleep_lock(&(pool->cond_task), &(pool->lock_task));
+		AcquireSRWLockExclusive(&(pool->lock_task));
+		while (!stop && pool->tasks.empty()) {
+			GK_LOG_INFO("AsyncWorker: worker %d wait (sleep)...\n", id);
+			SleepConditionVariableSRW(
+				&(pool->cond_task), &(pool->lock_task), INFINITE, 0);
 		}
-		if (!stop)
-		{
+		if (!stop) {
 			task = pool->tasks.front();
 			if (task)
 				pool->tasks.pop_front();
 		}
-		release_lock(&(pool->lock_task));
+		ReleaseSRWLockExclusive(&(pool->lock_task));
 
 		// 传递空指针表示结束
 		if (stop || !task)
 			break;
 
 		task->call();
-		acquire_lock(&(task->lock));
+		AcquireSRWLockExclusive(&(task->lock));
 		int finish = ++(task->num_finish);
 		int submit = task->num_submit;
-		release_lock(&(task->lock));
-		// log_assert(finish <= submit);
-		log_info(
+		ReleaseSRWLockExclusive(&(task->lock));
+		// GK_ASSERT(finish <= submit);
+		GK_LOG_INFO(
 			"AsyncWorker: worker %d, task %d, finish %d, submit %d\n",
 			id, task->id, finish, submit);
 		if (finish == submit)
-			wake_all_cond(&(task->cond));
-		acquire_lock(&(pool->lock_wait));
+			WakeAllConditionVariable(&(task->cond));
+		AcquireSRWLockExclusive(&(pool->lock_wait));
 		++(pool->num_finish);
-		release_lock(&(pool->lock_wait));
-		wake_all_cond(&(pool->cond_wait));
+		ReleaseSRWLockExclusive(&(pool->lock_wait));
+		WakeAllConditionVariable(&(pool->cond_wait));
 	}
-	log_info("AsyncWorker: worker %d stop now\n", id);
+	GK_LOG_INFO("AsyncWorker: worker %d stop now\n", id);
 }
 
 //////////////////// AsyncImpl ////////////////////
@@ -259,27 +235,12 @@ void AsyncWorker::loop()
 AsyncImpl::AsyncImpl()
 	: num_submit(0), num_finish(0)
 {
-	log_info(GK_Func);
-#	if defined HAVE_PTHREADS_PF
-	int err = 0;
-	err |= pthread_mutex_init(&lock_pool, NULL);
-	err |= pthread_mutex_init(&lock_wait, NULL);
-	err |= pthread_mutex_init(&lock_task, NULL);
-	err |= pthread_cond_init(&cond_wait, NULL);
-	err |= pthread_cond_init(&cond_task, NULL);
-	if (err)
-		log_error("failed to initialize AsyncImpl (pthreads)");
-	max_worker = pthread_num_processors_np() * 2; // not too much
-#	elif defined HAVE_WIN32_THREAD
-	InitializeSRWLock(&lock_pool);
-	InitializeSRWLock(&lock_wait);
-	InitializeSRWLock(&lock_task);
-	InitializeConditionVariable(&cond_wait);
-	InitializeConditionVariable(&cond_task);
-	SYSTEM_INFO sysinfo;
-	GetSystemInfo(&sysinfo);
-	max_worker = sysinfo.dwNumberOfProcessors * 2; // 2 for SMT/HT ?
-#	endif
+	lock_pool = SRWLOCK_INIT;
+	lock_wait = SRWLOCK_INIT;
+	lock_task = SRWLOCK_INIT;
+	cond_wait = CONDITION_VARIABLE_INIT;
+	cond_task = CONDITION_VARIABLE_INIT;
+	max_worker = getNumberOfCPU() * 2;
 	workers.reserve(max_worker);
 }
 
@@ -287,38 +248,27 @@ AsyncImpl::~AsyncImpl()
 {
 	// 明显起见，你需要手动等待所有任务完成
 	// wait();
-	acquire_lock(&lock_wait);
-	log_assert(num_finish == num_submit);
-	release_lock(&lock_wait);
-	acquire_lock(&(lock_pool));
-	log_assert(tasks.empty());
+	AcquireSRWLockExclusive(&lock_wait);
+	GK_ASSERT(num_finish == num_submit);
+	ReleaseSRWLockExclusive(&lock_wait);
+	AcquireSRWLockExclusive(&lock_pool);
+	GK_ASSERT(tasks.empty());
 	int len = static_cast<int>(workers.size());
-	log_info("AsyncImpl: destroy AsyncImpl with %d worker(s)\n", len);
-	acquire_lock(&lock_task);
+	GK_LOG_INFO("AsyncImpl: destroy AsyncImpl with %d worker(s)\n", len);
+	AcquireSRWLockExclusive(&lock_task);
 	tasks.push_back(nullptr);
-	release_lock(&lock_task);
-	wake_all_cond(&cond_task);
+	ReleaseSRWLockExclusive(&lock_task);
+	WakeAllConditionVariable(&cond_task);
 	while (len--)
 		workers.pop_back();
-	release_lock(&(lock_pool));
-#	if defined HAVE_PTHREADS_PF
-	log_assert(!pthread_cond_destroy(&cond_task));
-	log_assert(!pthread_cond_destroy(&cond_wait));
-	log_assert(!pthread_mutex_destroy(&lock_task));
-	log_assert(!pthread_mutex_destroy(&lock_wait));
-	log_assert(!pthread_mutex_destroy(&lock_pool));
-#	elif defined HAVE_WIN32_THREAD
-	_CRT_UNUSED(len);
-	// nothing to do
-#	endif
+	ReleaseSRWLockExclusive(&(lock_pool));
 }
 
 int AsyncImpl::set(int size)
 {
-	acquire_lock(&(lock_pool));
+	AcquireSRWLockExclusive(&(lock_pool));
 	int curr = static_cast<int>(workers.size());
-	if (size != INT_MIN)
-	{
+	if (size != INT_MIN) {
 		if (size <= 0)
 			size = max_worker / 2;
 		size = min(size, max_worker);
@@ -327,7 +277,7 @@ int AsyncImpl::set(int size)
 		for (int i = curr; i > size; --i)
 			workers.pop_back();
 	}
-	release_lock(&(lock_pool));
+	ReleaseSRWLockExclusive(&(lock_pool));
 	return curr;
 }
 
@@ -335,58 +285,57 @@ void AsyncImpl::submit(RefPtr<AsyncTask> const& task)
 {
 	if (!task)
 		return;
-	acquire_lock(&lock_pool);
-	log_assert(workers.size());
-	release_lock(&lock_pool);
-	acquire_lock(&lock_wait);
+	AcquireSRWLockExclusive(&lock_pool);
+	GK_ASSERT(workers.size());
+	ReleaseSRWLockExclusive(&lock_pool);
+	AcquireSRWLockExclusive(&lock_wait);
 	++num_submit;
-	release_lock(&lock_wait);
-	acquire_lock(&(task->lock));
+	ReleaseSRWLockExclusive(&lock_wait);
+	AcquireSRWLockExclusive(&(task->lock));
 	++(task->num_submit);
-	release_lock(&(task->lock));
-	acquire_lock(&(lock_task));
+	ReleaseSRWLockExclusive(&(task->lock));
+	AcquireSRWLockExclusive(&(lock_task));
 	tasks.push_back(task);
-	release_lock(&(lock_task));
-	wake_cond(&(cond_task));
+	ReleaseSRWLockExclusive(&(lock_task));
+	WakeConditionVariable(&(cond_task));
 }
 
 void AsyncImpl::submit(RefPtr<AsyncTask>* task, int len)
 {
 	if (len < 1)
 		return;
-	acquire_lock(&lock_pool);
-	log_assert(workers.size());
-	release_lock(&lock_pool);
-	acquire_lock(&lock_wait);
+	AcquireSRWLockExclusive(&lock_pool);
+	GK_ASSERT(workers.size());
+	ReleaseSRWLockExclusive(&lock_pool);
+	AcquireSRWLockExclusive(&lock_wait);
 	num_submit += len;
-	release_lock(&lock_wait);
-	acquire_lock(&(lock_task));
-	int i = 0;
-	for (; i < len; ++i)
-	{
+	ReleaseSRWLockExclusive(&lock_wait);
+	AcquireSRWLockExclusive(&(lock_task));
+	int ok = 0;
+	for (int i = 0; i < len; ++i) {
 		if (!task[i])
 			continue;
-		acquire_lock(&(task[i]->lock));
+		++ok;
+		AcquireSRWLockExclusive(&(task[i]->lock));
 		++(task[i]->num_submit);
-		release_lock(&(task[i]->lock));
+		ReleaseSRWLockExclusive(&(task[i]->lock));
 		tasks.push_back(task[i]);
 	}
-	release_lock(&(lock_task));
-	if (i == 1)
-		wake_cond(&(cond_task));
-	else if (i > 1)
-		wake_all_cond(&(cond_task));
+	ReleaseSRWLockExclusive(&(lock_task));
+	if (ok == 1)
+		WakeConditionVariable(&cond_task);
+	else if (ok > 1)
+		WakeAllConditionVariable(&cond_task);
 }
 
 void AsyncImpl::wait()
 {
-	acquire_lock(&lock_wait);
-	while (num_finish != num_submit)
-	{
-		// log_assert(num_finish < num_submit);
-		sleep_lock(&cond_wait, &lock_wait);
+	AcquireSRWLockExclusive(&lock_wait);
+	while (num_finish != num_submit) {
+		// GK_ASSERT(num_finish < num_submit);
+		SleepConditionVariableSRW(&cond_wait, &lock_wait, INFINITE, 0);
 	}
-	release_lock(&lock_wait);
+	ReleaseSRWLockExclusive(&lock_wait);
 }
 }
 
@@ -394,19 +343,21 @@ void AsyncImpl::wait()
 
 AsyncPool::AsyncPool()
 {
-	impl = new details::AsyncImpl;
-}
-
-AsyncPool::AsyncPool(AsyncPool&& rhs)
-{
-	impl = rhs.impl;
-	rhs.impl = nullptr;
+	using details::AsyncImpl;
+	constexpr ptrdiff_t to = GK_ALIGNOF(AsyncImpl);
+	static_assert(to + sizeof(AsyncImpl) <= sizeof(storage), "");
+	impl = nullptr;
+	size_t base = reinterpret_cast<size_t>(static_cast<void*>(storage));
+	AsyncImpl* ptr = reinterpret_cast<AsyncImpl*>((base + to - 1) & -to);
+	new (ptr) AsyncImpl;
+	impl = ptr;
 }
 
 AsyncPool::~AsyncPool()
 {
 	if (impl)
-		delete impl;
+		impl->~AsyncImpl();
+	impl = nullptr;
 }
 
 int AsyncPool::get()
@@ -434,52 +385,3 @@ void AsyncPool::wait()
 	impl->wait();
 }
 }
-
-#else
-
-namespace gk
-{
-AsyncTask::AsyncTask()
-	: num_submit(0), num_finish(0), id(-1) { }
-
-AsyncTask::~AsyncTask() { }
-
-void AsyncTask::wait() { }
-
-AsyncPool::AsyncPool()
-	: impl(nullptr) { }
-
-AsyncPool::AsyncPool(AsyncPool&&) = default;
-
-AsyncPool::~AsyncPool() { }
-
-int AsyncPool::get()
-{
-	return 0;
-}
-
-int AsyncPool::set(int)
-{
-	return 0;
-}
-
-void AsyncPool::submit(RefPtr<AsyncTask> const& task)
-{
-	log_assert(task);
-	task->call();
-}
-
-void AsyncPool::submit(RefPtr<AsyncTask>* task, size_t len)
-{
-	for (size_t i = 0; i < len; ++i)
-	{
-		log_assert(task[i]);
-		task[i]->call();
-	}
-}
-
-void AsyncPool::wait() { }
-
-}
-
-#endif

@@ -1,28 +1,26 @@
 ﻿#pragma once
-#include "type.hpp"
+#include "refptr.hpp"
 
-namespace gk
-{
-namespace details
-{
+namespace gk {
+namespace details {
 class AsyncImpl;
 class AsyncWorker;
 }
 
 class AsyncTask;
 
-class AsyncPool
-{
+class AsyncPool {
 	friend class AsyncTask;
 	details::AsyncImpl* impl;
+	uint8_t storage[192];
 
+	AsyncPool(AsyncPool&&) = delete;
 	AsyncPool(AsyncPool const&) = delete;
 	AsyncPool& operator=(AsyncPool&&) = delete;
 	AsyncPool& operator=(AsyncPool const&) = delete;
 
 public:
 	AsyncPool();
-	AsyncPool(AsyncPool&&);
 	~AsyncPool();
 
 	// get the number of workers
@@ -36,19 +34,13 @@ public:
 	void wait();
 };
 
-class AsyncTask : public RefCount
-{
+class AsyncTask : public RefObj {
 	friend class details::AsyncImpl;
 	friend class details::AsyncWorker;
 
 	int num_submit, num_finish;
-#if defined HAVE_PTHREADS_PF
-	pthread_mutex_t lock;
-	pthread_cond_t cond;
-#elif defined HAVE_WIN32_THREAD
 	SRWLOCK lock;
 	CONDITION_VARIABLE cond;
-#endif
 
 public:
 	// start from 0. use for debug

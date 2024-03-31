@@ -5,7 +5,7 @@
 	"version": "0.2.0",
 	"configurations": [
 		{
-			"name": "(gdb) Launch",
+			"name": "(gdb) mingw64",
 			"type": "cppdbg",
 			"request": "launch",
 			"program": "${workspaceFolder}/ThreadPool.exe",
@@ -25,6 +25,28 @@
 				}
 			],
 			"preLaunchTask": "mingw64"
+		},
+		{
+			"name": "(gdb) linux",
+			"type": "cppdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/ThreadPool.out",
+			"args": [],
+			"stopAtEntry": false,
+			"cwd": "${workspaceFolder}",
+			"environment": [],
+			"externalConsole": false,
+			"internalConsoleOptions": "openOnSessionStart",
+			"MIMode": "gdb",
+			"miDebuggerPath": "/usr/bin/gdb",
+			"setupCommands": [
+				{
+					"description": "Enable pretty-printing for gdb",
+					"text": "-enable-pretty-printing",
+					"ignoreFailures": false
+				}
+			],
+			"preLaunchTask": "linux.x64"
 		},
 	]
 }

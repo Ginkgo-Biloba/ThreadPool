@@ -1,20 +1,28 @@
 {
 	"configurations": [
 		{
-			"name": "Win32",
+			"name": "mingw.x64",
 			"defines": [
-				"_DEBUG",
-				"_WIN32_WINNT=_WIN32_WINNT_WIN6"
+				"_WIN32_WINNT=_WIN32_WINNT_WIN7"
 			],
-			"windowsSdkVersion": "8.1",
-			"compilerPath": "${env:mingw}\\bin\\g++.exe",
+			"compilerPath": "${env:mingw}\\bin\\x86_64-w64-mingw32-g++.exe",
 			"cStandard": "c11",
-			"cppStandard": "c++11",
-			"intelliSenseMode": "windows-gcc-x64",
-			"includePath": [],
-			"compilerArgs": [
-				"-msse4.2"
-			]
+			"cppStandard": "gnu++14",
+			"intelliSenseMode": "windows-gcc-x64"
+		},
+		{
+			"name": "linux.x64",
+			"compilerPath": "/usr/bin/x86_64-linux-gnu-g++",
+			"cStandard": "c11",
+			"cppStandard": "gnu++14",
+			"intelliSenseMode": "linux-gcc-x64"
+		},
+		{
+			"name": "linux.aarch64",
+			"compilerPath": "/usr/bin/aarch64-linux-gnu-g++",
+			"cStandard": "c11",
+			"cppStandard": "gnu++14",
+			"intelliSenseMode": "linux-gcc-x64"
 		}
 	],
 	"version": 4

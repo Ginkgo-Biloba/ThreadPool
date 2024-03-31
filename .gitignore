@@ -245,5 +245,7 @@ ModelManifest.xml
 # FAKE - F# Make
 .fake/
 
-# 生成的图像
+# 生成文件
 *.ppm
+*.exe
+*.out
