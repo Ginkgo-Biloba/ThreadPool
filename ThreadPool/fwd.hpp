@@ -1,9 +1,10 @@
 ﻿#pragma once
+#include <climits>
 #include <cstdlib>
 #include <cstddef>
-#include <cstdio>
 #include <cstdint>
-#include <cstdarg>
+#include <cstdio>
+#include <ctime>
 
 #if defined __GNUC__ || defined __clang__
 #	define GK_FUNC          __PRETTY_FUNCTION__
@@ -64,6 +65,16 @@
 #elif defined __linux__
 #	include <pthread.h>
 #	include <sys/sysinfo.h>
+#	include <unistd.h>
+#	include <syscall.h>
+#	include <linux/futex.h>
+
+GK_ALWAYS_INLINE long sysfutex(
+	uint32_t* uaddr, int futex_op, uint32_t val, const struct timespec* timeout,
+	uint32_t* uaddr2 /* or: uint32_t val2 */, uint32_t val3)
+{
+	return syscall(SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3);
+}
 #endif
 
 namespace gk {
@@ -93,6 +104,8 @@ GK_ALWAYS_INLINE constexpr T const& clamp(T const& v, T const& lo, T const& hi)
 
 #if defined __linux__
 
+#	define WINE_LOCK 1
+
 // https://learn.microsoft.com/zh-cn/windows/win32/sync/one-time-initialization
 typedef union _RTL_RUN_ONCE {
 	// 使结构体大小和 Windows 上的相同
@@ -117,12 +130,13 @@ typedef union _RTL_SRWLOCK {
 		uint32_t ex_lock : 1;  // 是否写锁定
 	} bs;                    // bit filed
 	struct {
-		uint32_t locked   : 1;                         // 是否锁定
-		uint32_t spining  : 1;                         // 是否有线程在自旋等待
-		uint32_t waiting  : 1;                         // 是否包含等待链表
-		uint32_t multiple : 1;                         // 是否是获取了多个读锁
-		uintptr_t nshared : sizeof(uintptr_t) * 8 - 4; // 获取读锁的线程数
-	} wl;                                            // waiting list
+		uint32_t locked   : 1; // 是否锁定
+		uint32_t spining  : 1; // 是否有线程在自旋等待
+		uint32_t waiting  : 1; // 是否包含等待链表
+		uint32_t multiple : 1; // 是否是获取了多个读锁
+		// 获得读锁的线程数，或者指向链表头节点的指针
+		uintptr_t rd_hold : sizeof(uintptr_t) * 8 - 4;
+	} wl; // waiting list
 } SRWLOCK, *PSRWLOCK;
 
 // https://learn.microsoft.com/zh-cn/windows/win32/sync/condition-variables
@@ -176,7 +190,13 @@ int SleepConditionVariableSRW(PCONDITION_VARIABLE ConditionVariable,
 void WakeConditionVariable(PCONDITION_VARIABLE ConditionVariable);
 void WakeAllConditionVariable(PCONDITION_VARIABLE ConditionVariable);
 
-void Sleep(uint32_t dwMilliseconds);
+GK_ALWAYS_INLINE void Sleep(uint32_t dwMilliseconds)
+{
+	timespec ts;
+	ts.tv_sec = dwMilliseconds / 1000;
+	ts.tv_nsec = (dwMilliseconds - ts.tv_sec * 1000) * 1000000;
+	nanosleep(&ts, NULL);
+}
 
 #elif defined _WIN32
 
@@ -234,6 +254,7 @@ GK_ALWAYS_INLINE void yield(int delay)
 	}
 }
 
+/* 返回的是逻辑核数量，带超线程 */
 GK_ALWAYS_INLINE int getNumberOfCPU()
 {
 #if defined _WIN32

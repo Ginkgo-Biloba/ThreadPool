@@ -26,6 +26,7 @@
 				"-o",
 				"ThreadPool.exe",
 				"ThreadPool\\fwd.cpp",
+				"ThreadPool\\srw.cpp",
 				"ThreadPool\\main.cpp",
 				"ThreadPool\\syncpool.cpp",
 				"ThreadPool\\asyncpool.cpp"
@@ -67,6 +68,7 @@
 				"-o",
 				"ThreadPool.out",
 				"ThreadPool/fwd.cpp",
+				"ThreadPool/srw.cpp",
 				"ThreadPool/main.cpp",
 				"ThreadPool/syncpool.cpp",
 				"ThreadPool/asyncpool.cpp",
@@ -105,6 +107,7 @@
 				"-o",
 				"ThreadPool.out",
 				"ThreadPool/fwd.cpp",
+				"ThreadPool/srw.cpp",
 				"ThreadPool/main.cpp",
 				"ThreadPool/syncpool.cpp",
 				"ThreadPool/asyncpool.cpp",

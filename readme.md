@@ -25,19 +25,16 @@
 1. 对于不符合参数要求的调用，或者出各种问题的话，给出消息后直接挂掉。
 1. 测试？封装？接口规范？复制过去能用就行了，要啥自行车。
 1. 在 Windows 上用 VS2019 和 MinGW-w64 TDM-GCC 5.1.0 测试过。
+1. Linux 系统在 x86_64 和 aarch64 的 GCC 上测试过。
 1. `SyncPool` 同时只运行一个并行任务，嵌套的当做单线程运行。
 1. 因为专注计算量大的数值或者图像任务，所以不过多关注线程池本身的同步性能。
 
-## 引用库
+## 参考/抄袭
 
 `SyncPool` 的基本思路抄自 OpenCV 的 [`parallel_impl.cpp`](https://github.com/opencv/opencv/blob/4.1.0/modules/core/src/parallel_impl.cpp)。
 
 不能跨进程使用。
 
-通过宏定义选择实现，可以编译时定义宏 `HAVE_PARALLEL_FRAMEWORK` 为下面的值：
-
-0. 不带多线程编译，所有调用都是直接单线程运行。
-1. [POSIX Threads](https://www.sourceware.org/pthreads-win32/)。此时定义宏 `HAVE_PTHREADS_PF`。Windows 上运行需要对应的 pthreadXXX.dll。
-2. [Windows Thread](https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/beginthread-beginthreadex)。此时定义 `HAVE_WIN32_THREAD`。逻辑与 pthreads 类似，使用 Slim Reader/Writer (SRW) Locks [`SRWLOCK`](https://docs.microsoft.com/en-us/windows/win32/sync/slim-reader-writer--srw--locks) + Condition Variables [`CONDITION_VARIABLE`](https://docs.microsoft.com/en-us/windows/win32/sync/condition-variables) 。Windows Vista 及之后可用。
-3. ~~[Windows Thread Pool](https://docs.microsoft.com/en-us/windows/win32/procthread/thread-pools)。此时定义 `HAVE_WIN32_POOL`。基本思想是把 Windows 自带的异步（第一种）线程池当做第二种使用。Windows Vista 及之后可用 (ref: The original thread pool has been completely rearchitected in Windows Vista)。~~
-
+1. Windows 上使用 [beginthread](https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/beginthread-beginthreadex) 和 [Slim Reader/Writer (SRW) Locks](https://docs.microsoft.com/en-us/windows/win32/sync/slim-reader-writer--srw--locks) `SRWLOCK` + [Condition Variables](https://docs.microsoft.com/en-us/windows/win32/sync/condition-variables) `CONDITION_VARIABLE` 。Windows Vista 及之后可用。
+1. Linux 上使用 pthread 和 [winehq](https://github.com/wine-mirror/wine/blob/87164ee3332c95f0cd9a1f3e4598056689cdfadc/dlls/ntdll/unix/sync.c) 里面用 futex 实现的 SRWLOCK 和 CONDITION_VARIABLE，差不多是 winehq 2014 年的代码了。
+1. [Windows Thread Pool](https://docs.microsoft.com/en-us/windows/win32/procthread/thread-pools)。同步线程池使用这个测试了一下。此时定义 `HAVE_WIN32_POOL`。基本思想是把 Windows 自带的异步（第一种）线程池当做第二种使用。Windows Vista 及之后可用 (ref: The original thread pool has been completely rearchitected in Windows Vista)。

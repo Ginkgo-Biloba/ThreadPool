@@ -3,7 +3,7 @@
 		{
 			"name": "mingw.x64",
 			"defines": [
-				"_WIN32_WINNT=_WIN32_WINNT_WIN7"
+				"_WIN32_WINNT=_WIN32_WINNT_VISTA"
 			],
 			"compilerPath": "${env:mingw}\\bin\\x86_64-w64-mingw32-g++.exe",
 			"cStandard": "c11",

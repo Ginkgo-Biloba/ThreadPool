@@ -1,21 +1,5 @@
-﻿#include "fwd.hpp"
-#include "atomic.hpp"
-
-#ifdef __linux__
-#	include <unistd.h>
-#	include <syscall.h>
-#	include <linux/futex.h>
-#	include <climits>
-
-#	define WINE_LOCK 1
-
-GK_ALWAYS_INLINE long sysfutex(
-	uint32_t* uaddr, int futex_op, uint32_t val, const struct timespec* timeout,
-	uint32_t* uaddr2 /* or: uint32_t val2 */, uint32_t val3)
-{
-	return syscall(SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3);
-}
-#endif
+﻿#include "atomic.hpp"
+#include <cstdarg>
 
 namespace gk {
 
@@ -44,11 +28,11 @@ enum {
 // __cxa_guard_acquire
 int InitOnceBeginInitialize(LPINIT_ONCE lpInitOnce, uint32_t, int*, void**)
 {
-	uint32_t* once = lpInitOnce->value;
+	uint32_t* futex = lpInitOnce->value;
 	for (;;) {
 		uint32_t old = 0;
 		// 成功从未初始化设置到开始初始化状态
-		if (atomic_compare_exchange(once, &old, kOncePending))
+		if (atomic_compare_exchange(futex, &old, kOncePending))
 			return 1;
 		// 完成初始化
 		if (old == kOnceGuard)
@@ -56,7 +40,7 @@ int InitOnceBeginInitialize(LPINIT_ONCE lpInitOnce, uint32_t, int*, void**)
 		if (old == kOncePending) {
 			// 告诉初始化线程要唤醒自己
 			int val = old | kOnceWaiting;
-			if (!atomic_compare_exchange(once, &old, val)) {
+			if (!atomic_compare_exchange(futex, &old, val)) {
 				// 可能初始化完了，从 pending 变成 guard
 				if (old == kOnceGuard)
 					return 0;
@@ -67,7 +51,7 @@ int InitOnceBeginInitialize(LPINIT_ONCE lpInitOnce, uint32_t, int*, void**)
 			}
 			old = val;
 		}
-		sysfutex(once, FUTEX_WAIT_PRIVATE, old, NULL, NULL, 0);
+		sysfutex(futex, FUTEX_WAIT_PRIVATE, old, NULL, NULL, 0);
 	}
 	GK_UNREACHABLE;
 }
@@ -75,19 +59,11 @@ int InitOnceBeginInitialize(LPINIT_ONCE lpInitOnce, uint32_t, int*, void**)
 // __cxa_guard_release
 int InitOnceComplete(LPINIT_ONCE lpInitOnce, uint32_t, void*)
 {
-	uint32_t* once = lpInitOnce->value;
-	uint32_t old = atomic_exchange(once, kOnceGuard);
+	uint32_t* futex = lpInitOnce->value;
+	uint32_t old = atomic_exchange(futex, kOnceGuard);
 	if (old & kOnceWaiting)
-		sysfutex(once, FUTEX_WAKE_PRIVATE, INT_MAX, NULL, NULL, 0);
+		sysfutex(futex, FUTEX_WAKE_PRIVATE, INT_MAX, NULL, NULL, 0);
 	return 0;
-}
-
-void Sleep(uint32_t dwMilliseconds)
-{
-	timespec ts;
-	ts.tv_sec = dwMilliseconds / 1000;
-	ts.tv_nsec = (dwMilliseconds - ts.tv_sec * 1000) * 1000000;
-	nanosleep(&ts, NULL);
 }
 
 #	if WINE_LOCK
@@ -112,15 +88,15 @@ void Sleep(uint32_t dwMilliseconds)
  * https://github.com/wine-mirror/wine/blob/87164ee3332c95f0cd9a1f3e4598056689cdfadc/dlls/ntdll/unix/sync.c
  * 
  * 完全用 futex 做同步，wine 里面的实现
- * 由于读写锁只有计数，因此锁不公平，无法做到 写-读-写 的 FIFO 顺序
+ * 这里的读写等待只有计数，因此锁不公平，无法做到 读-写-读-写 的 FIFO 顺序
  * 
  * gcc 位域操作优化不好，因此直接用位运算处理
  * https://godbolt.org/z/zhPWY4rE8
  */
 
 enum {
-	kLockFutexBitsetExclusive = 1 << 16,
-	kLockFutexBitsetShared = 1 << 0,
+	kLockExclusiveFutexBitset = 1 << 16,
+	kLockSharedFutexBitset = 1 << 0,
 	kLockExclusiveLockedMask = 0x80000000,
 	kLockExclusiveWaiterMask = 0x7fff0000,
 	kLockExclusiveWaiterInc = 0x00010000,
@@ -191,7 +167,7 @@ void AcquireSRWLockExclusive(PSRWLOCK lock)
 		if (!wait)
 			return;
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAIT_BITSET,
-			old.value[0], NULL, NULL, kLockFutexBitsetExclusive);
+			old.value[0], NULL, NULL, kLockExclusiveFutexBitset);
 	}
 	GK_UNREACHABLE;
 }
@@ -216,7 +192,7 @@ void AcquireSRWLockShared(PSRWLOCK lock)
 		if (!wait)
 			return;
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAIT_BITSET,
-			old.value[0], NULL, NULL, kLockFutexBitsetShared);
+			old.value[0], NULL, NULL, kLockSharedFutexBitset);
 	}
 	GK_UNREACHABLE;
 }
@@ -226,23 +202,23 @@ void ReleaseSRWLockExclusive(PSRWLOCK lock)
 	uint32_t* futex = lock->value;
 	SRWLOCK val, old = *lock;
 	do {
-		val = old;
 		if (!old.bs.ex_lock) {
 			GK_LOG_ERROR("lock %p (%llx) is not owned exclusive\n",
 				static_cast<void*>(lock), static_cast<long long>(lock->padding));
 		}
+		val = old;
 		val.bs.ex_lock = 0;
 		// 没有写锁在等待，就唤醒读锁
 		// 这个锁不公平，有写锁在等，读锁就一直拿不到
 		if (!old.bs.ex_wait)
 			val.bs.rd_wait = 0;
 	} while (!atomic_compare_exchange(futex, old.value, val.value[0]));
-	if (val.bs.ex_wait) {
+	if (old.bs.ex_wait) {
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAKE_BITSET,
-			1, NULL, NULL, kLockFutexBitsetExclusive);
-	} else {
+			1, NULL, NULL, kLockExclusiveFutexBitset);
+	} else if (old.bs.rd_wait) {
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAKE_BITSET,
-			INT_MAX, NULL, NULL, kLockFutexBitsetShared);
+			INT_MAX, NULL, NULL, kLockSharedFutexBitset);
 	}
 }
 
@@ -251,7 +227,6 @@ void ReleaseSRWLockShared(PSRWLOCK lock)
 	uint32_t* futex = lock->value;
 	SRWLOCK val, old = *lock;
 	do {
-		val = old;
 		if (old.bs.ex_lock) {
 			GK_LOG_ERROR("lock %p (%llx) is owned exclusive\n",
 				static_cast<void*>(lock), static_cast<long long>(lock->padding));
@@ -260,12 +235,13 @@ void ReleaseSRWLockShared(PSRWLOCK lock)
 			GK_LOG_ERROR("lock %p (%llx) is not owned shared\n",
 				static_cast<void*>(lock), static_cast<long long>(lock->padding));
 		}
+		val = old;
 		val.bs.rd_hold = old.bs.rd_hold - 1;
 	} while (!atomic_compare_exchange(futex, old.value, val.value[0]));
 	// 没有线程持有读锁，并且存在等待写锁的线程，尝试唤醒写锁等待者
 	if (!val.bs.rd_hold && val.bs.ex_wait) {
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAKE_BITSET,
-			1, NULL, NULL, kLockFutexBitsetExclusive);
+			1, NULL, NULL, kLockExclusiveFutexBitset);
 	}
 }
 
@@ -293,14 +269,13 @@ int TryAcquireSRWLockShared(PSRWLOCK lock)
 	uint32_t* futex = lock->value;
 	uint32_t val, old = *futex;
 	do {
+		val = old;
 		if (!(old & kLockExclusiveLockedMask) && !(old & kLockExclusiveWaiterMask)) {
 			GK_ASSERT((old & kLockSharedOwnedMask) < kLockSharedOwnedMask);
 			val = old + kLockSharedOwnedInc;
 			ret = 1;
-		} else {
-			val = old;
+		} else
 			ret = 0;
-		}
 	} while (!atomic_compare_exchange(futex, &old, val));
 	return ret;
 }
@@ -313,23 +288,21 @@ void AcquireSRWLockExclusive(PSRWLOCK lock)
 	do {
 		val = old;
 		GK_ASSERT((old & kLockExclusiveWaiterMask) < kLockExclusiveWaiterMask);
-		// 添加写锁等待计数，防止读锁轮流持续，写锁一直拿不到
 		val = old + kLockExclusiveWaiterInc;
 	} while (!atomic_compare_exchange(futex, &old, val));
 	for (;;) {
 		do {
+			val = old;
 			if (!(old & kLockExclusiveLockedMask) && !(old & kLockSharedOwnedMask)) {
 				val = (old | kLockExclusiveLockedMask) - kLockExclusiveWaiterInc;
 				wait = false;
-			} else {
-				val = old;
+			} else
 				wait = true;
-			}
 		} while (!atomic_compare_exchange(futex, &old, val));
 		if (!wait)
 			return;
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAIT_BITSET,
-			old, NULL, NULL, kLockFutexBitsetExclusive);
+			old, NULL, NULL, kLockExclusiveFutexBitset);
 	}
 	GK_UNREACHABLE;
 }
@@ -353,7 +326,7 @@ void AcquireSRWLockShared(PSRWLOCK lock)
 		if (!wait)
 			return;
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAIT_BITSET,
-			old, NULL, NULL, kLockFutexBitsetShared);
+			old, NULL, NULL, kLockSharedFutexBitset);
 	}
 	GK_UNREACHABLE;
 }
@@ -373,10 +346,10 @@ void ReleaseSRWLockExclusive(PSRWLOCK lock)
 	} while (!atomic_compare_exchange(futex, &old, val));
 	if (old & kLockExclusiveWaiterMask) {
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAKE_BITSET,
-			1, NULL, NULL, kLockFutexBitsetExclusive);
+			1, NULL, NULL, kLockExclusiveFutexBitset);
 	} else if (old & kLockSharedWaiterMask) {
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAKE_BITSET,
-			INT_MAX, NULL, NULL, kLockFutexBitsetShared);
+			INT_MAX, NULL, NULL, kLockSharedFutexBitset);
 	}
 }
 
@@ -385,7 +358,6 @@ void ReleaseSRWLockShared(PSRWLOCK lock)
 	uint32_t* futex = lock->value;
 	uint32_t val, old = *futex;
 	do {
-		val = old;
 		if (old & kLockExclusiveLockedMask) {
 			GK_LOG_ERROR("lock %p (%llx) is owned exclusive\n",
 				static_cast<void*>(lock), static_cast<long long>(lock->padding));
@@ -398,7 +370,7 @@ void ReleaseSRWLockShared(PSRWLOCK lock)
 	} while (!atomic_compare_exchange(futex, &old, val));
 	if (!(val & kLockSharedOwnedMask) && (val & kLockExclusiveWaiterMask)) {
 		sysfutex(futex, FUTEX_PRIVATE_FLAG | FUTEX_WAKE_BITSET,
-			1, NULL, NULL, kLockFutexBitsetExclusive);
+			1, NULL, NULL, kLockExclusiveFutexBitset);
 	}
 }
 
@@ -444,13 +416,6 @@ void WakeAllConditionVariable(PCONDITION_VARIABLE ConditionVariable)
 	atomic_fetch_add(futex, 1);
 	sysfutex(futex, FUTEX_WAKE_PRIVATE, INT_MAX, NULL, NULL, 0);
 }
-
-#	else // REACTOS_LOCK
-
-/* 使用链表串起等待队列，ReactOS 里面的实现
- * 自己操作链表，因此可以自定义加锁和唤醒顺序
- * https://github.com/reactos/reactos/blob/d712c895fd8373eba1c0348add37be81982575cc/sdk/lib/rtl/srw.c
- */
 
 #	endif
 
