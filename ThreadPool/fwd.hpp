@@ -56,139 +56,31 @@
 #define GK_CONCAT(x, y)     GK_CONCAT_AUX(x, y)
 
 #if defined _WIN32
-#	define WIN32_LEAN_AND_MEAN
 #	define NOCOMM
 #	undef NOMINMAX // mingw-w64 redefined
 #	define NOMINMAX
 #	include <Windows.h>
 #	include <process.h>
+
+#	define NT_SUCCESS(x) ((NTSTATUS)(x) >= 0)
+
+EXTERN_C NTSYSAPI NTSTATUS NTAPI NtCreateKeyedEvent(
+	OUT PHANDLE KeyedEventHandle, IN ACCESS_MASK DesiredAccess,
+	IN PVOID /*POBJECT_ATTRIBUTES*/ ObjectAttributes, IN ULONG Reserved);
+
+EXTERN_C NTSYSAPI NTSTATUS NTAPI NtWaitForKeyedEvent(
+	IN HANDLE KeyedEventHandle, IN PVOID Key,
+	IN BOOLEAN Alertable, IN PLARGE_INTEGER Timeout OPTIONAL);
+
+EXTERN_C NTSYSAPI NTSTATUS NTAPI NtReleaseKeyedEvent(
+	IN HANDLE KeyedEventHandle, IN PVOID Key,
+	IN BOOLEAN Alertable, IN PLARGE_INTEGER Timeout OPTIONAL);
+
 #elif defined __linux__
 #	include <pthread.h>
-#	include <sys/sysinfo.h>
 #	include <unistd.h>
 #	include <syscall.h>
 #	include <linux/futex.h>
-
-GK_ALWAYS_INLINE long sysfutex(
-	uint32_t* uaddr, int futex_op, uint32_t val, const struct timespec* timeout,
-	uint32_t* uaddr2 /* or: uint32_t val2 */, uint32_t val3)
-{
-	return syscall(SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3);
-}
-#endif
-
-namespace gk {
-
-// a 与 b 的较大者。若等价则返回 a
-template <typename T>
-GK_ALWAYS_INLINE constexpr T const& min(T const& a, T const& b)
-{
-	return b < a ? b : a;
-}
-
-// a 与 b 的较小者。若等价则返回 a
-template <typename T>
-GK_ALWAYS_INLINE constexpr T const& max(T const& a, T const& b)
-{
-	return a < b ? b : a;
-}
-
-// 若 v 小于 lo 则为 lo，若 hi 小于 v 则为 hi，否则为 v
-template <typename T>
-GK_ALWAYS_INLINE constexpr T const& clamp(T const& v, T const& lo, T const& hi)
-{
-	return v < lo ? lo : (hi < v ? hi : v);
-}
-
-//////////////////// from wine / reactos ////////////////////
-
-#if defined __linux__
-
-#	define WINE_LOCK 1
-
-// https://learn.microsoft.com/zh-cn/windows/win32/sync/one-time-initialization
-typedef union _RTL_RUN_ONCE {
-	// 使结构体大小和 Windows 上的相同
-	uintptr_t padding;
-	uint32_t value[1];
-	struct {
-		uint32_t ready   : 8; // 是否完成初始化
-		uint32_t pending : 1; // 是否有线程正在初始化
-		uint32_t waiting : 1; // 是否有线程在等待
-		uintptr_t nsleep : sizeof(uintptr_t) * 8 - 1;
-	} bs;
-} INIT_ONCE, *PINIT_ONCE, *LPINIT_ONCE;
-
-// https://learn.microsoft.com/zh-cn/windows/win32/sync/slim-reader-writer--srw--locks
-typedef union _RTL_SRWLOCK {
-	uintptr_t padding;
-	uint32_t value[1];
-	struct {
-		uint32_t rd_hold : 15; // 获取到读锁的线程数
-		uint32_t rd_wait : 1;  // 是否包含读等待
-		uint32_t ex_wait : 15; // 等待写锁的线程数
-		uint32_t ex_lock : 1;  // 是否写锁定
-	} bs;                    // bit filed
-	struct {
-		uint32_t locked   : 1; // 是否锁定
-		uint32_t spining  : 1; // 是否有线程在自旋等待
-		uint32_t waiting  : 1; // 是否包含等待链表
-		uint32_t multiple : 1; // 是否是获取了多个读锁
-		// 获得读锁的线程数，或者指向链表头节点的指针
-		uintptr_t rd_hold : sizeof(uintptr_t) * 8 - 4;
-	} wl; // waiting list
-} SRWLOCK, *PSRWLOCK;
-
-// https://learn.microsoft.com/zh-cn/windows/win32/sync/condition-variables
-typedef union _RTL_CONDITION_VARIABLE {
-	uintptr_t padding;
-	uint32_t value[1];
-} CONDITION_VARIABLE, *PCONDITION_VARIABLE;
-
-// clang-format off
-#	define INIT_ONCE_STATIC_INIT   { 0 }
-#	define SRWLOCK_INIT            { 0 }
-#	define CONDITION_VARIABLE_INIT { 0 }
-#	define INFINITE 0xffffffff
-#	define CONDITION_VARIABLE_LOCKMODE_SHARED 1
-// clang-format on
-
-/* 如果返回非 0 值，当前线程应该完成初始化
- * 如果返回 0，表示初始化已完成
- * 不支持 dwFlags fPending lpContext 三个参数，只是为了接口一致
- */
-int InitOnceBeginInitialize(
-	LPINIT_ONCE lpInitOnce, uint32_t dwFlags, int* fPending, void** lpContext);
-int InitOnceComplete(LPINIT_ONCE lpInitOnce, uint32_t dwFlags, void* lpContext);
-
-/* 如果成功获取锁，则返回值为非零值
- * 如果当前线程无法获取锁，则返回值为零
- */
-int TryAcquireSRWLockExclusive(PSRWLOCK SRWLock);
-/* 如果成功获取锁，则返回值为非零值
- * 如果当前线程无法获取锁，则返回值为零
- */
-int TryAcquireSRWLockShared(PSRWLOCK SRWLock);
-void AcquireSRWLockExclusive(PSRWLOCK SRWLock);
-void AcquireSRWLockShared(PSRWLOCK SRWLock);
-void ReleaseSRWLockExclusive(PSRWLOCK SRWLock);
-void ReleaseSRWLockShared(PSRWLOCK SRWLock);
-
-/* 如果该函数成功，则返回值为非零值
- * 如果超时过期，函数将返回 0
- * 
- * dwMilliseconds
- * - 如果 dwMilliseconds 为零，该函数将测试指定对象的状态并立即返回
- * - 如果 dwMilliseconds 为 INFINITE，则函数的超时间隔永远不会过期
- * 
- * Flags
- * - 如果为 CONDITION_VARIABLE_LOCKMODE_SHARED，则 SRW 锁处于共享模式
- * - 否则，锁处于独占模式
- */
-int SleepConditionVariableSRW(PCONDITION_VARIABLE ConditionVariable,
-	PSRWLOCK SRWLock, uint32_t dwMilliseconds, uint32_t Flags);
-void WakeConditionVariable(PCONDITION_VARIABLE ConditionVariable);
-void WakeAllConditionVariable(PCONDITION_VARIABLE ConditionVariable);
 
 GK_ALWAYS_INLINE void Sleep(uint32_t dwMilliseconds)
 {
@@ -197,33 +89,49 @@ GK_ALWAYS_INLINE void Sleep(uint32_t dwMilliseconds)
 	ts.tv_nsec = (dwMilliseconds - ts.tv_sec * 1000) * 1000000;
 	nanosleep(&ts, NULL);
 }
+#endif
 
-#elif defined _WIN32
+namespace gk {
 
-using ::INIT_ONCE;
-using ::InitOnceBeginInitialize;
-using ::InitOnceComplete;
+#if defined _WIN32
 
-using ::SRWLOCK;
-using ::TryAcquireSRWLockExclusive;
-using ::TryAcquireSRWLockShared;
-using ::AcquireSRWLockExclusive;
-using ::AcquireSRWLockShared;
-using ::ReleaseSRWLockExclusive;
-using ::ReleaseSRWLockShared;
+HANDLE GlobalKeyedEventHandle();
 
-using ::CONDITION_VARIABLE;
-using ::SleepConditionVariableSRW;
-using ::WakeAllConditionVariable;
-using ::WakeConditionVariable;
+#elif defined __linux__
 
-using ::Sleep;
+GK_ALWAYS_INLINE long sysfutex(
+	uint32_t* uaddr, int futex_op, uint32_t val, const struct timespec* timeout,
+	uint32_t* uaddr2 /* or: uint32_t val2 */, uint32_t val3)
+{
+	return syscall(SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3);
+}
 
 #endif
 
-//////////////////// from opencv ////////////////////
+// The smaller of a and b. If equivalent, returns a
+template <typename T>
+GK_ALWAYS_INLINE constexpr T const& min(T const& a, T const& b)
+{
+	return b < a ? b : a;
+}
 
-GK_ALWAYS_INLINE void yield(int delay)
+// The greater of a and b. If equivalent, returns a.
+template <typename T>
+GK_ALWAYS_INLINE constexpr T const& max(T const& a, T const& b)
+{
+	return a < b ? b : a;
+}
+
+// lo if v < lo, hi if hi < v, otherwise v
+template <typename T>
+GK_ALWAYS_INLINE constexpr T const& clamp(T const& v, T const& lo, T const& hi)
+{
+	return v < lo ? lo : (hi < v ? hi : v);
+}
+
+//////////////////// from OpenCV ////////////////////
+
+GK_ALWAYS_INLINE void yield(uint32_t delay)
 {
 	// clang-format off
 	while (delay--)
@@ -247,25 +155,10 @@ GK_ALWAYS_INLINE void yield(int delay)
 #elif defined _MSC_VER && (defined _M_ARM || defined _M_ARM64)
 		__yield();
 #else
-		(void)(delay);
 #	warning "can't detect `pause' (CPU-yield) instruction on the target platform"
 #endif
-		// clang-format on
 	}
-}
-
-/* 返回的是逻辑核数量，带超线程 */
-GK_ALWAYS_INLINE int getNumberOfCPU()
-{
-#if defined _WIN32
-	SYSTEM_INFO sysinfo;
-	GetNativeSystemInfo(&sysinfo);
-	return sysinfo.dwNumberOfProcessors;
-#elif defined __linux__
-	return get_nprocs();
-#else
-	return 1;
-#endif
+	// clang-format on
 }
 
 GK_ALWAYS_INLINE int64_t getTickCount()

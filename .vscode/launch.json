@@ -12,11 +12,14 @@
 			"args": [],
 			"stopAtEntry": false,
 			"cwd": "${workspaceFolder}",
-			"environment": [],
+			"environment": [
+				{ "name": "Path", "value": "${env:mingw}\\bin"}
+			],
 			"externalConsole": false,
 			"internalConsoleOptions": "openOnSessionStart",
 			"MIMode": "gdb",
 			"miDebuggerPath": "${env:mingw}\\bin\\gdb64.exe",
+			"miDebuggerArgs": "--silent",
 			"setupCommands": [
 				{
 					"description": "Enable pretty-printing for gdb",
@@ -39,6 +42,7 @@
 			"internalConsoleOptions": "openOnSessionStart",
 			"MIMode": "gdb",
 			"miDebuggerPath": "/usr/bin/gdb",
+			"miDebuggerArgs": "--silent",
 			"setupCommands": [
 				{
 					"description": "Enable pretty-printing for gdb",

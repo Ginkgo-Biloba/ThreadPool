@@ -1,4 +1,4 @@
-﻿#include "atomic.hpp"
+﻿#include "fwd.hpp"
 #include <cstdarg>
 
 namespace gk {
@@ -17,7 +17,108 @@ void logError(char const* file, char const* func, int line, char const* fmt, ...
 	GK_TRAP;
 }
 
-#ifdef __linux__
+#if defined _WIN32
+
+HANDLE GlobalKeyedEventHandle()
+{
+	static HANDLE handle = INVALID_HANDLE_VALUE;
+	static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+	BOOL pending = FALSE;
+	GK_ASSERT(InitOnceBeginInitialize(&once, 0, &pending, NULL));
+	if (pending) {
+		GK_ASSERT(NT_SUCCESS(
+			NtCreateKeyedEvent(&handle, EVENT_ALL_ACCESS, NULL, 0)));
+		GK_ASSERT(InitOnceComplete(&once, 0, NULL));
+	}
+	return handle;
+}
+
+#elif defined __linux__ && 0
+
+// https://learn.microsoft.com/zh-cn/windows/win32/sync/one-time-initialization
+typedef union _RTL_RUN_ONCE {
+	uintptr_t padding;
+	uint32_t value[1];
+	struct {
+		uint32_t ready   : 8; // 是否完成初始化
+		uint32_t pending : 1; // 是否有线程正在初始化
+		uint32_t waiting : 1; // 是否有线程在等待
+		uintptr_t nsleep : sizeof(uintptr_t) * 8 - 1;
+	} bs;
+} INIT_ONCE, *PINIT_ONCE, *LPINIT_ONCE;
+
+// https://learn.microsoft.com/zh-cn/windows/win32/sync/slim-reader-writer--srw--locks
+typedef union _RTL_SRWLOCK {
+	uintptr_t padding;
+	uint32_t value[1];
+	struct {
+		uint32_t rd_hold : 15; // 获取到读锁的线程数
+		uint32_t rd_wait : 1;  // 是否包含读等待
+		uint32_t ex_wait : 15; // 等待写锁的线程数
+		uint32_t ex_lock : 1;  // 是否写锁定
+	} bs;                    // bit filed
+	struct {
+		uint32_t locked   : 1; // 是否锁定
+		uint32_t spining  : 1; // 是否有线程在自旋等待
+		uint32_t waiting  : 1; // 是否包含等待链表
+		uint32_t multiple : 1; // 是否是获取了多个读锁
+		// 获得读锁的线程数，或者指向链表头节点的指针
+		uintptr_t rd_hold : sizeof(uintptr_t) * 8 - 4;
+	} wl; // waiting list
+} SRWLOCK, *PSRWLOCK;
+
+// https://learn.microsoft.com/zh-cn/windows/win32/sync/condition-variables
+typedef union _RTL_CONDITION_VARIABLE {
+	uintptr_t padding;
+	uint32_t value[1];
+} CONDITION_VARIABLE, *PCONDITION_VARIABLE;
+
+// clang-format off
+#	define INIT_ONCE_STATIC_INIT   { 0 }
+#	define SRWLOCK_INIT            { 0 }
+#	define CONDITION_VARIABLE_INIT { 0 }
+#	define INFINITE 0xffffffff
+#	define CONDITION_VARIABLE_LOCKMODE_SHARED 1
+// clang-format on
+
+/* 如果返回非 0 值，当前线程应该完成初始化
+ * 如果返回 0，表示初始化已完成
+ * 不支持 dwFlags fPending lpContext 三个参数，只是为了接口一致
+ */
+int InitOnceBeginInitialize(
+	LPINIT_ONCE lpInitOnce, uint32_t dwFlags, int* fPending, void** lpContext);
+int InitOnceComplete(LPINIT_ONCE lpInitOnce, uint32_t dwFlags, void* lpContext);
+
+/* 如果成功获取锁，则返回值为非零值
+ * 如果当前线程无法获取锁，则返回值为零
+ */
+int TryAcquireSRWLockExclusive(PSRWLOCK SRWLock);
+/* 如果成功获取锁，则返回值为非零值
+ * 如果当前线程无法获取锁，则返回值为零
+ */
+int TryAcquireSRWLockShared(PSRWLOCK SRWLock);
+void AcquireSRWLockExclusive(PSRWLOCK SRWLock);
+void AcquireSRWLockShared(PSRWLOCK SRWLock);
+void ReleaseSRWLockExclusive(PSRWLOCK SRWLock);
+void ReleaseSRWLockShared(PSRWLOCK SRWLock);
+
+/* 如果该函数成功，则返回值为非零值
+ * 如果超时过期，函数将返回 0
+ * 
+ * dwMilliseconds
+ * - 如果 dwMilliseconds 为零，该函数将测试指定对象的状态并立即返回
+ * - 如果 dwMilliseconds 为 INFINITE，则函数的超时间隔永远不会过期
+ * 
+ * Flags
+ * - 如果为 CONDITION_VARIABLE_LOCKMODE_SHARED，则 SRW 锁处于共享模式
+ * - 否则，锁处于独占模式
+ */
+int SleepConditionVariableSRW(PCONDITION_VARIABLE ConditionVariable,
+	PSRWLOCK SRWLock, uint32_t dwMilliseconds, uint32_t Flags);
+void WakeConditionVariable(PCONDITION_VARIABLE ConditionVariable);
+void WakeAllConditionVariable(PCONDITION_VARIABLE ConditionVariable);
+
+//////////////////////////////  //////////////////////////////
 
 enum {
 	kOncePending = 1 << 0, // 有线程正在初始化
@@ -66,8 +167,6 @@ int InitOnceComplete(LPINIT_ONCE lpInitOnce, uint32_t, void*)
 	return 0;
 }
 
-#	if WINE_LOCK
-
 /* Futex-based SRW lock implementation
  *
  * Since we can rely on the kernel to release all threads and don't need to
@@ -105,7 +204,7 @@ enum {
 	kLockSharedOwnedInc = 0x00000001,
 };
 
-#		if 0
+#	if 0
 
 int TryAcquireSRWLockExclusive(PSRWLOCK lock)
 {
@@ -245,7 +344,7 @@ void ReleaseSRWLockShared(PSRWLOCK lock)
 	}
 }
 
-#		else
+#	else
 
 int TryAcquireSRWLockExclusive(PSRWLOCK lock)
 {
@@ -374,7 +473,7 @@ void ReleaseSRWLockShared(PSRWLOCK lock)
 	}
 }
 
-#		endif
+#	endif
 
 /* Futex-based condition variable implementation
  * https://github.com/wine-mirror/wine/blob/c577ce2671ba8b003dbbdb329ada56368a370778/dlls/ntdll/unix/sync.c
@@ -417,8 +516,5 @@ void WakeAllConditionVariable(PCONDITION_VARIABLE ConditionVariable)
 	sysfutex(futex, FUTEX_WAKE_PRIVATE, INT_MAX, NULL, NULL, 0);
 }
 
-#	endif
-
 #endif
-
-} // namespace gk
+}

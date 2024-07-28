@@ -8,7 +8,7 @@
 			"type": "process",
 			"command": "${env:mingw}\\bin\\g++.exe",
 			"args": [
-				"-D_WIN32_WINNT=_WIN32_WINNT_WIN7",
+				"-D_WIN32_WINNT=_WIN32_WINNT_VISTA",
 				"-std=gnu++14",
 				"-msse4.2",
 				"-ggdb",
@@ -26,10 +26,9 @@
 				"-o",
 				"ThreadPool.exe",
 				"ThreadPool\\fwd.cpp",
-				"ThreadPool\\srw.cpp",
+				"ThreadPool\\parallel.cpp",
 				"ThreadPool\\main.cpp",
-				"ThreadPool\\syncpool.cpp",
-				"ThreadPool\\asyncpool.cpp"
+				"-lntdll"
 			],
 			"group": {
 				"kind": "build",
@@ -68,10 +67,8 @@
 				"-o",
 				"ThreadPool.out",
 				"ThreadPool/fwd.cpp",
-				"ThreadPool/srw.cpp",
+				"ThreadPool/parallel.cpp",
 				"ThreadPool/main.cpp",
-				"ThreadPool/syncpool.cpp",
-				"ThreadPool/asyncpool.cpp",
 				"-lpthread"
 			],
 			"group": "build",
@@ -107,10 +104,8 @@
 				"-o",
 				"ThreadPool.out",
 				"ThreadPool/fwd.cpp",
-				"ThreadPool/srw.cpp",
+				"ThreadPool/parallel.cpp",
 				"ThreadPool/main.cpp",
-				"ThreadPool/syncpool.cpp",
-				"ThreadPool/asyncpool.cpp",
 				"-lpthread"
 			],
 			"group": "build",

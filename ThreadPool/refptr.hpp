@@ -5,12 +5,10 @@
 namespace gk {
 
 struct RefObj {
-	int refcount;
+	uint32_t refcount;
 
 	RefObj() { refcount = 0; }
 	virtual ~RefObj() { GK_ASSERT(refcount == 0); }
-
-	int addref(int x) { return atomic_fetch_add(&refcount, x); }
 
 	RefObj(RefObj const&) = delete;
 	RefObj(RefObj&&) = delete;
@@ -22,14 +20,22 @@ struct RefObj {
 	typename std::enable_if<std::is_convertible<X*, Y*>::value, int>::type = 0
 
 template <typename T>
-class RefPtr final {
+class RefPtr {
 	static_assert(std::is_base_of<RefObj, T>::value, "");
+
+	template <typename U>
+	friend class RefPtr;
 
 	T* obj;
 
+	void addref()
+	{
+		if (obj) atomic_fetch_add(&(obj->refcount), 1);
+	}
+
 	void destroy()
 	{
-		if (obj && obj->addref(-1) == 1)
+		if (obj && atomic_fetch_add(&(obj->refcount), -1) == 1)
 			delete obj;
 		obj = nullptr;
 	}
@@ -50,14 +56,15 @@ public:
 
 	RefPtr(T* ptr)
 	{
+		GK_ASSERT(ptr->refcount == 0);
 		obj = ptr;
-		if (obj) obj->addref(1);
+		addref();
 	}
 
 	RefPtr(RefPtr const& other)
 	{
 		obj = other.obj;
-		if (obj) obj->addref(1);
+		addref();
 	}
 
 	RefPtr(RefPtr&& other)
@@ -70,14 +77,14 @@ public:
 	RefPtr(U* ptr)
 	{
 		obj = static_cast<T*>(ptr);
-		if (obj) obj->addref(1);
+		addref();
 	}
 
 	template <typename U, GK_REFPTR_ENABLE_IF(U, T)>
 	RefPtr(RefPtr<U> const& other)
 	{
 		obj = static_cast<T*>(other.obj);
-		if (obj) obj->addref(1);
+		addref();
 	}
 
 	template <typename U, GK_REFPTR_ENABLE_IF(U, T)>
@@ -87,9 +94,17 @@ public:
 		other.obj = nullptr;
 	}
 
-	RefPtr& operator=(std::nullptr_t) { destroy(); }
+	RefPtr& operator=(std::nullptr_t)
+	{
+		destroy();
+		return *this;
+	}
 
-	RefPtr& operator=(T* ptr) { RefPtr(ptr).swap(*this); }
+	RefPtr& operator=(T* ptr)
+	{
+		RefPtr(ptr).swap(*this);
+		return *this;
+	}
 
 	RefPtr& operator=(RefPtr const& other)
 	{
@@ -104,7 +119,11 @@ public:
 	}
 
 	template <typename U, GK_REFPTR_ENABLE_IF(U, T)>
-	RefPtr& operator=(U* ptr) { RefPtr(ptr).swap(*this); }
+	RefPtr& operator=(U* ptr)
+	{
+		RefPtr(ptr).swap(*this);
+		return *this;
+	}
 
 	template <typename U, GK_REFPTR_ENABLE_IF(U, T)>
 	RefPtr& operator=(RefPtr<U> const& other)
@@ -122,14 +141,14 @@ public:
 
 	T* get() const noexcept { return obj; }
 	T* operator->() const noexcept { return obj; }
-	explicit operator bool() const noexcept { return !!obj; }
+	explicit operator bool() const noexcept { return static_cast<bool>(obj); }
 
 	template <typename U>
 	RefPtr<U> staticTo() noexcept
 	{
 		RefPtr<U> u;
 		u.obj = static_cast<U*>(obj);
-		if (obj) obj->addref(1);
+		addref();
 		return u;
 	}
 
@@ -138,7 +157,7 @@ public:
 	{
 		RefPtr<U> u;
 		u.obj = dynamic_cast<U*>(obj);
-		if (obj) obj->addref(1);
+		addref();
 		return u;
 	}
 };
