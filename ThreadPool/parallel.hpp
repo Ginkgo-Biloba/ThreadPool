@@ -3,9 +3,103 @@
 
 namespace gk {
 
+#if defined _WIN32
+
+struct JobLock {
+	SRWLOCK impl;
+
+	JobLock() { InitializeSRWLock(&impl); }
+	~JobLock() = default;
+	void acquire() { AcquireSRWLockExclusive(&impl); }
+	void release() { ReleaseSRWLockExclusive(&impl); }
+};
+
+struct JobCond {
+	CONDITION_VARIABLE impl;
+
+	JobCond() { InitializeConditionVariable(&impl); }
+	~JobCond() = default;
+	void wait(JobLock& lock) { GK_ASSERT(SleepConditionVariableSRW(&impl, &(lock.impl), INFINITE, 0)); }
+	void signal() { WakeConditionVariable(&impl); }
+	void broadcast() { WakeAllConditionVariable(&impl); }
+};
+
+/* WaitEvent
+
+On Windows, submit and nsleep are limited to 65535.
+*/
+class JobEvent {
+	enum {
+		one_value = 1u,
+		mask_value = (1u << 16) - 1u,
+		one_sleep = 1u << 16,
+		mask_sleep = ((1u << 16) - 1u) << 16
+	};
+
+	/* Bit field
+	 	- 15-0  submit: The real value, i.e. the number of submission
+		- 31-16 nsleep: The number of threads sleeping */
+	uint32_t value;
+
+public:
+	JobEvent() { value = 0; }
+	/* Should not on working or on sleeping */
+	~JobEvent() { GK_ASSERT(value == 0); }
+
+	void wait(uint32_t desired);
+	void wake();
+	uint32_t enter() { return atomic_fetch_add(&value, +one_value) & mask_value; }
+	uint32_t leave() { return atomic_fetch_add(&value, -one_value) & mask_value; }
+};
+
+#elif defined __linux__
+
+struct JobLock {
+	pthread_mutex_t impl;
+
+	JobLock() { GK_ASSERT(!pthread_mutex_init(&impl, NULL)); }
+	~JobLock() { GK_ASSERT(!pthread_mutex_destroy(&impl)); }
+	void acquire() { GK_ASSERT(!pthread_mutex_lock(&impl)); }
+	void release() { GK_ASSERT(!pthread_mutex_unlock(&impl)); }
+};
+
+struct JobCond {
+	pthread_cond_t impl;
+
+	JobCond() { GK_ASSERT(!pthread_cond_init(&impl, NULL)); }
+	~JobCond() { GK_ASSERT(!pthread_cond_destroy(&impl)); }
+	void wait(JobLock& lock) { GK_ASSERT(!pthread_cond_wait(&impl, &(lock.impl))); }
+	void signal() { GK_ASSERT(!pthread_cond_signal(&impl)); }
+	void broadcast() { GK_ASSERT(!pthread_cond_broadcast(&impl)); }
+};
+
+/* WaitEvent
+
+On Linux, it is just a wrapper on futex invocation.
+*/
+class JobEvent {
+	uint32_t value;
+
+public:
+	JobEvent() { value = 0; }
+	~JobEvent() { GK_ASSERT(value == 0); }
+
+	void wait(uint32_t desired)
+	{
+		for (uint32_t submit; (submit = atomic_load(&value)) != desired;)
+			sysfutex(&value, FUTEX_WAIT_PRIVATE, submit, NULL, NULL, 0);
+	}
+	void wake() { sysfutex(&value, FUTEX_WAKE_PRIVATE, INT_MAX, NULL, NULL, 0); }
+	uint32_t enter() { return atomic_fetch_add(&value, +1); }
+	uint32_t leave() { return atomic_fetch_add(&value, -1); }
+};
+
+#endif
+
 /* Asynchronous job
 
-Before completed, it can be submitted to the thread pool multiple times,
+Before completed,
+		it can be submitted to the thread pool multiple times (< 65536),
 		to allowing multiple threads to do the job simultaneously.
 Need to do job's partition and concurrency in `call`.
 
@@ -17,13 +111,9 @@ struct AsyncJob : RefObj {
 		to avoid other jobs waiting for long time */
 	uint32_t priority;
 
-	/* The number of submit,
-		indicates how many threads will work on it simultaneously */
-	uint32_t working;
-
-	/* The number of sleeping threads.
+	/* Indicates how many threads will work on it simultaneously
 		Multiple threads can wait on a same job */
-	uint32_t sleeping;
+	JobEvent event;
 
 	AsyncJob();
 	virtual ~AsyncJob();
@@ -58,10 +148,10 @@ struct AsyncPool {
 	void submit(RefPtr<AsyncJob> job);
 
 	/* Waiting all submitted jobs completed
-	
-		If jobs are submitted during waiting, they are not be guaranteed completed.
+
+		Jobs submitted during waiting are not be guaranteed completed.
 	*/
-	void waitAllDone();
+	void wait();
 
 private:
 	struct IdJob {
@@ -83,18 +173,11 @@ private:
 
 	uint32_t num_thread;
 	uint32_t current_id;
-	// Number of jobs not completed
-	uint32_t working;
-	// Number of sleeping threads. Usually 1 (the main thread)
-	uint32_t sleeping;
+	/* The number of jobs not completed */
+	JobEvent event;
 	Worker workers[MAX_THREAD];
-#if defined _WIN32
-	SRWLOCK pool_lock, work_lock;
-	CONDITION_VARIABLE work_cond;
-#elif defined __linux__
-	pthread_mutex_t pool_lock, work_lock;
-	pthread_cond_t work_cond;
-#endif
+	JobLock pool_lock, work_lock;
+	JobCond work_cond;
 	std::vector<IdJob> waitlist;
 
 #if defined _WIN32
@@ -105,9 +188,8 @@ private:
 };
 
 /* Synchronous job, same to cv::ParLoopBody */
-
 struct SyncJob {
-	/* Number of invorking `call` at most
+	/* The number of invorking `call` at most
 		- 0 : dynamically decide internally. starting from 1/4 now
 		- 1 : only the main thread do job
 		- other : min(maxcall, allend - allstart) */
@@ -158,13 +240,12 @@ private:
 		uint32_t const allstart, allend;
 		// Current index in range
 		uint32_t index;
-		// The number of threads on working
-		uint32_t working;
-		// The number of threads sleeping. Only 1 here (the main)
-		uint32_t sleeping;
+		/* Linux: The number of threads on working */
+		JobEvent event;
 
 		JobRef(SyncJob& job, uint32_t ntrd);
 		~JobRef();
+		void execute();
 	};
 
 	struct Worker {
@@ -174,24 +255,17 @@ private:
 #if defined _WIN32
 		unsigned win32_id;
 		uintptr_t thread;
-		SRWLOCK lock;
-		CONDITION_VARIABLE cond;
 #elif defined __linux__
 		pthread_t thread;
-		pthread_cond_t cond;
-		pthread_mutex_t lock;
 #endif
+		JobLock lock;
+		JobCond cond;
 	};
 
 	uint32_t num_worker;
 	Worker workers[MAX_THREAD];
-#if defined _WIN32
-	SRWLOCK pool_lock;
-	CONDITION_VARIABLE pool_cond;
-#elif defined __linux__
-	pthread_cond_t pool_cond;
-	pthread_mutex_t pool_lock;
-#endif
+	JobLock pool_lock;
+	JobCond pool_cond;
 
 #if defined _WIN32
 	static unsigned __stdcall trdRoutine(void* void_args);

@@ -1,6 +1,5 @@
 ﻿#include <ctime>
 #include <cmath>
-#include <fstream>
 #include "parallel.hpp"
 using namespace gk;
 using std::vector;
@@ -62,19 +61,19 @@ static void draw_mandelbrot(Mat& m,
 	}
 }
 
-bool writePGM(Mat const& img, int frame)
+static void writePGM(Mat const& img, int frame)
 {
+	return;
 	char name[128];
 	snprintf(name, sizeof(name), "pool%02d.ppm", frame);
-	std::ofstream ofs;
-	ofs.open(name, std::ios::binary | std::ios::trunc);
-	if (!(ofs.is_open()))
-		return false;
-	ofs << "P5\n"
-			<< img.cols << " " << img.rows << "\n255\n";
-	size_t size = sizeof(uint8_t) * img.rows * img.cols;
-	ofs.write(reinterpret_cast<char const*>(img.data), size);
-	return static_cast<size_t>(ofs.tellp()) == size;
+	FILE* fid = fopen(name, "wb");
+	if (!fid) {
+		perror(name);
+		return;
+	}
+	fprintf(fid, "P5\n%d %d\n255\n", img.cols, img.rows);
+	fwrite(img.data, sizeof(uint8_t), img.rows * img.cols, fid);
+	fclose(fid);
 }
 
 class MbSync : public SyncJob {
@@ -181,7 +180,7 @@ int main()
 				x = X0, y = Y0, r = pow(0.2, i);
 			pool.submit(new MbAsync(0, rows, cols, x, y, r));
 		}
-		pool.waitAllDone();
+		pool.wait();
 		double elapse = static_cast<double>(getTickCount() - t1) * ifreq;
 		fprintf(stdout, "async t %9.3f\n", elapse);
 	}

@@ -69,7 +69,7 @@
 				"ThreadPool/fwd.cpp",
 				"ThreadPool/parallel.cpp",
 				"ThreadPool/main.cpp",
-				"-lpthread"
+				"-pthread"
 			],
 			"group": "build",
 			"presentation": {
@@ -106,7 +106,7 @@
 				"ThreadPool/fwd.cpp",
 				"ThreadPool/parallel.cpp",
 				"ThreadPool/main.cpp",
-				"-lpthread"
+				"-pthread"
 			],
 			"group": "build",
 			"presentation": {

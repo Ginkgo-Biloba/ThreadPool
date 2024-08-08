@@ -5,108 +5,52 @@ namespace gk {
 
 #if defined _WIN32
 
-GK_ALWAYS_INLINE void dolock(SRWLOCK* lock)
+void JobEvent::wait(uint32_t desired)
 {
-	AcquireSRWLockExclusive(lock);
-}
-
-GK_ALWAYS_INLINE void unlock(SRWLOCK* lock)
-{
-	ReleaseSRWLockExclusive(lock);
-}
-
-GK_ALWAYS_INLINE void cond_wait(CONDITION_VARIABLE* cond, SRWLOCK* lock)
-{
-	SleepConditionVariableSRW(cond, lock, INFINITE, 0);
-}
-
-GK_ALWAYS_INLINE void cond_signal(CONDITION_VARIABLE* cond)
-{
-	WakeConditionVariable(cond);
-}
-
-GK_ALWAYS_INLINE void cond_broadcast(CONDITION_VARIABLE* cond)
-{
-	WakeAllConditionVariable(cond);
-}
-
-GK_ALWAYS_INLINE void waitOnAddress(
-	uint32_t* address, uint32_t* sleeping, uint32_t desired)
-{
-	if (atomic_load(address) != desired) {
-		atomic_fetch_add(sleeping, 1);
+	/* Must do comparation and addition in one atomic operation
+		Otherwise this thread maybe miss the wake signal and sleep forever */
+	uint32_t* address = &value;
+	uint32_t submit, val, old = atomic_load(address);
+	do {
+		submit = old & mask_value;
+		if (submit == desired)
+			break;
+		val = old + one_sleep;
+	} while (!atomic_compare_exchange(address, &old, val));
+	if (submit != desired)
 		GK_ASSERT(NT_SUCCESS(
 			NtWaitForKeyedEvent(GlobalKeyedEventHandle(), address, FALSE, NULL)));
-	}
 }
 
-GK_ALWAYS_INLINE void wakeByAddress(uint32_t* address, uint32_t* sleeping)
+void JobEvent::wake()
 {
-	uint32_t nsleep = atomic_exchange(sleeping, 0);
-	while (nsleep--) {
+	uint32_t* address = &value;
+	uint32_t nsleep, val, old = atomic_load(address);
+	do {
+		nsleep = old & mask_sleep;
+		if (!nsleep)
+			break;
+		val = old & ~mask_sleep;
+	} while (!atomic_compare_exchange(address, &old, val));
+	for (; nsleep; nsleep -= one_sleep) {
 		GK_ASSERT(NT_SUCCESS(
 			NtReleaseKeyedEvent(GlobalKeyedEventHandle(), address, FALSE, NULL)));
 	}
 }
 
-#elif defined __linux__
-
-GK_ALWAYS_INLINE void dolock(pthread_mutex_t* lock)
-{
-	GK_ASSERT(!pthread_mutex_lock(lock));
-}
-
-GK_ALWAYS_INLINE void unlock(pthread_mutex_t* lock)
-{
-	GK_ASSERT(!pthread_mutex_unlock(lock));
-}
-
-GK_ALWAYS_INLINE void cond_wait(pthread_cond_t* cond, pthread_mutex_t* lock)
-{
-	GK_ASSERT(!pthread_cond_wait(cond, lock));
-}
-
-GK_ALWAYS_INLINE void cond_signal(pthread_cond_t* cond)
-{
-	GK_ASSERT(!pthread_cond_signal(cond));
-}
-
-GK_ALWAYS_INLINE void cond_broadcast(pthread_cond_t* cond)
-{
-	GK_ASSERT(!pthread_cond_broadcast(cond));
-}
-
-GK_ALWAYS_INLINE void waitOnAddress(
-	uint32_t* address, uint32_t* /*sleeping*/, uint32_t desired)
-{
-	while (true) {
-		uint32_t value = atomic_load(address);
-		if (value == desired)
-			return;
-		sysfutex(address, FUTEX_WAIT_PRIVATE, value, NULL, NULL, 0);
-	}
-}
-
-GK_ALWAYS_INLINE void wakeByAddress(uint32_t* address, uint32_t* /*sleeping*/)
-{
-	sysfutex(address, FUTEX_WAKE_PRIVATE, INT_MAX, NULL, NULL, 0);
-}
 #endif
 
 AsyncJob::AsyncJob()
-	: priority(0), working(0), sleeping(0)
+	: priority(0)
 {
 }
 
-AsyncJob::~AsyncJob() { GK_ASSERT(!working && !sleeping); }
+AsyncJob::~AsyncJob() { }
 
-void AsyncJob::wait()
-{
-	waitOnAddress(&working, &sleeping, 0);
-}
+void AsyncJob::wait() { event.wait(0); }
 
 AsyncPool::AsyncPool()
-	: num_thread(0), current_id(0), working(0), sleeping(0)
+	: num_thread(0), current_id(0)
 {
 	for (uint32_t i = 0; i < MAX_THREAD; ++i) {
 		workers[i].index = 0;
@@ -114,41 +58,25 @@ AsyncPool::AsyncPool()
 		workers[i].pool = this;
 		workers[i].thread = 0;
 	}
-#if defined _WIN32
-	pool_lock = SRWLOCK_INIT;
-	work_lock = SRWLOCK_INIT;
-	work_cond = CONDITION_VARIABLE_INIT;
-#elif defined __linux__
-	pthread_mutex_init(&pool_lock, NULL);
-	pthread_mutex_init(&work_lock, NULL);
-	pthread_cond_init(&work_cond, NULL);
-#endif
 }
 
 AsyncPool::~AsyncPool()
 {
-	waitAllDone();
 	setNumThread(0);
 	// Discard unfinished jobs
 	waitlist.clear();
-#if defined _WIN32
-#elif defined __linux__
-	pthread_mutex_destroy(&pool_lock);
-	pthread_mutex_destroy(&work_lock);
-	pthread_cond_destroy(&work_cond);
-#endif
 }
 
 void AsyncPool::setNumThread(uint32_t n)
 {
 	n = min(n, static_cast<uint32_t>(MAX_THREAD));
-	dolock(&pool_lock);
+	pool_lock.acquire();
 	if (n < num_thread) {
-		dolock(&work_lock);
+		work_lock.acquire();
 		for (uint32_t i = n; i < num_thread; ++i)
 			workers[i].stop = 1;
-		unlock(&work_lock);
-		cond_broadcast(&work_cond);
+		work_lock.release();
+		work_cond.broadcast();
 		for (uint32_t i = n; i < num_thread; ++i) {
 #if defined _WIN32
 			WaitForSingleObject(reinterpret_cast<HANDLE>(workers[i].thread), INFINITE);
@@ -180,23 +108,23 @@ void AsyncPool::setNumThread(uint32_t n)
 		}
 	}
 	num_thread = n;
-	unlock(&pool_lock);
+	pool_lock.release();
 }
 
 void AsyncPool::submit(RefPtr<AsyncJob> job)
 {
 	uint32_t ntrd = 0;
-	dolock(&pool_lock);
+	pool_lock.acquire();
 	ntrd = num_thread;
-	unlock(&pool_lock);
+	pool_lock.release();
 	if (ntrd < 1) {
 		job->call();
 		return;
 	}
 
-	atomic_fetch_add(&working, 1);
-	atomic_fetch_add(&(job->working), 1);
-	dolock(&work_lock);
+	event.enter();
+	job->event.enter();
+	work_lock.acquire();
 	uint32_t id = current_id++;
 	if (job->priority) {
 		// Cutting in queue by up to randomly 8 to 15
@@ -205,14 +133,11 @@ void AsyncPool::submit(RefPtr<AsyncJob> job)
 	}
 	waitlist.push_back(IdJob {id, job});
 	push_heap(waitlist.begin(), waitlist.end());
-	unlock(&work_lock);
-	cond_signal(&work_cond);
+	work_lock.release();
+	work_cond.signal();
 }
 
-void AsyncPool::waitAllDone()
-{
-	waitOnAddress(&working, &sleeping, 0);
-}
+void AsyncPool::wait() { event.wait(0); }
 
 #if defined _WIN32
 unsigned AsyncPool::trdRoutine(void* void_args)
@@ -224,25 +149,24 @@ void* AsyncPool::trdRoutine(void* void_args)
 	auto pool = wk->pool;
 	while (true) {
 		RefPtr<AsyncJob> job;
-		dolock(&(pool->work_lock));
+		pool->work_lock.acquire();
 		while (!(wk->stop) && pool->waitlist.empty())
-			cond_wait(&(pool->work_cond), &(pool->work_lock));
+			pool->work_cond.wait(pool->work_lock);
 		if (!(wk->stop)) {
 			std::pop_heap(pool->waitlist.begin(), pool->waitlist.end());
 			job = pool->waitlist.back().job;
 			pool->waitlist.pop_back();
 		}
-		unlock(&(pool->work_lock));
+		pool->work_lock.release();
 		if (!job)
 			break;
 		job->call();
 		// Job has been completed, notify sleeping threads
-		if (atomic_fetch_add(&(job->working), -1) == 1) {
-			wakeByAddress(&(job->working), &(job->sleeping));
-		}
+		if (job->event.leave() == 1)
+			job->event.wake();
 		// All jobs in queue are completed, notify the main thread
-		if (atomic_fetch_add(&(pool->working), -1) == 1)
-			wakeByAddress(&(pool->working), &(pool->sleeping));
+		if (pool->event.leave() == 1)
+			pool->event.wake();
 	}
 #if defined _WIN32
 	return wk->index;
@@ -260,12 +184,27 @@ SyncPool::JobRef::JobRef(SyncJob& sjob, uint32_t ntrd)
 	, allstart(sjob.allstart)
 	, allend(sjob.allend)
 	, index(sjob.allstart)
-	, working(0)
-	, sleeping(0)
 {
 }
 
-SyncPool::JobRef::~JobRef() { GK_ASSERT(!job || (!working && !sleeping)); }
+SyncPool::JobRef::~JobRef() { }
+
+void SyncPool::JobRef::execute()
+{
+	while (true) {
+		uint32_t start = atomic_load(&index);
+		if (start >= allend)
+			break;
+		uint32_t stripe = (allend - start) / nstripe / 4u;
+		if (maxcall)
+			stripe = (allend - allstart + maxcall - 1) / maxcall;
+		stripe = max(stripe, 1u);
+		start = atomic_fetch_add(&index, stripe);
+		if (start >= allend)
+			break;
+		job->call(start, min(start + stripe, allend));
+	}
+}
 
 SyncPool::SyncPool()
 	: num_worker(0)
@@ -275,49 +214,23 @@ SyncPool::SyncPool()
 		workers[i].stop = 0;
 		workers[i].pool = this;
 		workers[i].thread = 0;
-#if defined _WIN32
-		workers[i].lock = SRWLOCK_INIT;
-		workers[i].cond = CONDITION_VARIABLE_INIT;
-#elif defined __linux__
-		pthread_cond_init(&(workers[i].cond), NULL);
-		pthread_mutex_init(&(workers[i].lock), NULL);
-#endif
 	}
-#if defined _WIN32
-	pool_lock = SRWLOCK_INIT;
-	pool_cond = CONDITION_VARIABLE_INIT;
-#elif defined __linux__
-	pthread_mutex_init(&pool_lock, NULL);
-	pthread_cond_init(&pool_cond, NULL);
-#endif
 }
 
-SyncPool::~SyncPool()
-{
-	setNumThread(0);
-#if defined _WIN32
-#elif defined __linux__
-	for (uint32_t i = 0; i < MAX_THREAD; ++i) {
-		pthread_cond_destroy(&(workers[i].cond));
-		pthread_mutex_destroy(&(workers[i].lock));
-	}
-	pthread_cond_destroy(&pool_cond);
-	pthread_mutex_destroy(&pool_lock);
-#endif
-}
+SyncPool::~SyncPool() { setNumThread(0); }
 
 void SyncPool::setNumThread(uint32_t n)
 {
 	// if n == 1 or 0, only the main thread do jobs
 	n = min(n, static_cast<uint32_t>(MAX_THREAD));
 	n = max(n, 1u) - 1u;
-	dolock(&pool_lock);
+	pool_lock.acquire();
 	for (uint32_t i = n; i < num_worker; ++i) {
-		dolock(&(workers[i].lock));
+		workers[i].lock.acquire();
 		workers[i].stop = 1;
 		workers[i].ref = nullptr;
-		unlock(&(workers[i].lock));
-		cond_signal(&(workers[i].cond));
+		workers[i].lock.release();
+		workers[i].cond.signal();
 #if defined _WIN32
 		WaitForSingleObject(reinterpret_cast<HANDLE>(workers[i].thread), INFINITE);
 #elif defined __linux__
@@ -345,7 +258,7 @@ void SyncPool::setNumThread(uint32_t n)
 #endif
 	}
 	num_worker = n;
-	unlock(&pool_lock);
+	pool_lock.release();
 }
 
 void SyncPool::submit(SyncJob& job)
@@ -356,40 +269,27 @@ void SyncPool::submit(SyncJob& job)
 	uint32_t ntrd = job.allend - job.allstart;
 	if (job.maxcall)
 		ntrd = min(ntrd, job.maxcall);
-	dolock(&pool_lock);
+	pool_lock.acquire();
 	ntrd = min(ntrd, num_worker + 1);
 	if (ntrd < 2) {
-		unlock(&pool_lock);
+		pool_lock.release();
 		job.call(job.allstart, job.allend);
 		return;
 	}
+
 	// The main thread also needs to work
 	uint32_t subtrd = ntrd - 1;
 	RefPtr<JobRef> ref = new JobRef(job, ntrd);
 	for (uint32_t i = 0; i < subtrd; ++i) {
-		dolock(&(workers[i].lock));
+		workers[i].lock.acquire();
 		workers[i].ref = ref;
-		unlock(&(workers[i].lock));
-		cond_signal(&(workers[i].cond));
+		workers[i].lock.release();
+		workers[i].cond.signal();
 	}
-	unlock(&pool_lock);
-
-	while (true) {
-		uint32_t start = atomic_load(&(ref->index));
-		if (start >= ref->allend)
-			break;
-		uint32_t stripe = (ref->allend - start) / ref->nstripe / 4u;
-		if (ref->maxcall)
-			stripe = (ref->allend - ref->allstart + ref->maxcall - 1) / ref->maxcall;
-		stripe = max(stripe, 1u);
-		start = atomic_fetch_add(&(ref->index), stripe);
-		if (start >= ref->allend)
-			break;
-		ref->job->call(start, min(start + stripe, ref->allend));
-	}
-
+	pool_lock.release();
+	ref->execute();
 	// Waiting for job completed
-	waitOnAddress(&(ref->working), &(ref->sleeping), 0);
+	ref->event.wait(0);
 }
 
 #if defined _WIN32
@@ -401,31 +301,19 @@ void* SyncPool::trdRoutine(void* void_args)
 	auto wk = reinterpret_cast<Worker*>(void_args);
 	while (true) {
 		RefPtr<JobRef> ref;
-		dolock(&(wk->lock));
+		wk->lock.acquire();
 		while (!(wk->stop) && !(wk->ref))
-			cond_wait(&(wk->cond), &(wk->lock));
+			wk->cond.wait(wk->lock);
 		if (!(wk->stop))
 			ref.swap(wk->ref);
-		unlock(&(wk->lock));
+		wk->lock.release();
 		if (!ref)
 			break;
-		atomic_fetch_add(&(ref->working), 1);
-		while (true) {
-			uint32_t start = atomic_load(&(ref->index));
-			if (start >= ref->allend)
-				break;
-			uint32_t stripe = (ref->allend - start) / ref->nstripe / 4u;
-			if (ref->maxcall)
-				stripe = (ref->allend - ref->allstart + ref->maxcall - 1) / ref->maxcall;
-			stripe = max(stripe, 1u);
-			start = atomic_fetch_add(&(ref->index), stripe);
-			if (start >= ref->allend)
-				break;
-			ref->job->call(start, min(start + stripe, ref->allend));
-		}
+		ref->event.enter();
+		ref->execute();
 		// Job completed, notify the main thread
-		if (atomic_fetch_add(&(ref->working), -1) == 1)
-			wakeByAddress(&(ref->working), &(ref->sleeping));
+		if (ref->event.leave() == 1)
+			ref->event.wake();
 	}
 #if defined _WIN32
 	return wk->index;

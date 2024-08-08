@@ -11,7 +11,7 @@
 		int>::type                                     \
 		= sz
 
-#if defined _MSC_VER || defined __MINGW32__
+#if defined _MSC_VER
 
 // https://docs.microsoft.com/en-us/cpp/intrinsics/intrinsics-available-on-all-architectures?view=vs-2019
 #	include <intrin.h>
@@ -63,7 +63,6 @@ namespace gk {
 				opCas(reinterpret_cast<itype volatile*>(ptr), 0, 0));     \
 		}
 
-#	if !defined(__MINGW32__)
 GK_ATOMIC_DEFINE(1, char, _InterlockedExchangeAdd8,
 	_InterlockedAnd8, _InterlockedOr8, _InterlockedXor8,
 	_InterlockedExchange8, _InterlockedCompareExchange8)
@@ -71,7 +70,6 @@ GK_ATOMIC_DEFINE(1, char, _InterlockedExchangeAdd8,
 GK_ATOMIC_DEFINE(2, short, _InterlockedExchangeAdd16,
 	_InterlockedAnd16, _InterlockedOr16, _InterlockedXor16,
 	_InterlockedExchange16, _InterlockedCompareExchange16)
-#	endif
 
 GK_ATOMIC_DEFINE(4, long, _InterlockedExchangeAdd,
 	_InterlockedAnd, _InterlockedOr, _InterlockedXor,
@@ -91,17 +89,10 @@ GK_ATOMIC_DEFINE(8, __int64, _InterlockedExchangeAdd64,
 			return msfunc(reinterpret_cast<itype volatile*>(ptr), bit); \
 		}
 
-#	ifdef _MSC_VER
 GK_ATOMIC_BTS(4, bts, long, _interlockedbittestandset)
 GK_ATOMIC_BTS(4, btr, long, _interlockedbittestandreset)
 GK_ATOMIC_BTS(8, bts, __int64, _interlockedbittestandset64)
 GK_ATOMIC_BTS(8, btr, __int64, _interlockedbittestandreset64)
-#	else
-GK_ATOMIC_BTS(4, bts, long, InterlockedBitTestAndSet)
-GK_ATOMIC_BTS(4, btr, long, InterlockedBitTestAndReset)
-GK_ATOMIC_BTS(8, bts, __int64, InterlockedBitTestAndSet64)
-GK_ATOMIC_BTS(8, btr, __int64, InterlockedBitTestAndReset64)
-#	endif
 
 #	undef GK_ATOMIC_BTS
 #	undef GK_ATOMIC_DEFINE
