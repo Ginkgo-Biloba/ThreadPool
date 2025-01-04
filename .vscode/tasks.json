@@ -1,0 +1,124 @@
+{
+	// Consultez https://go.microsoft.com/fwlink/?LinkId=733558 
+	// pour voir la documentation sur le format de tasks.json
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "mingw64",
+			"type": "process",
+			"command": "${env:mingw}\\bin\\g++.exe",
+			"args": [
+				"-D_WIN32_WINNT=_WIN32_WINNT_VISTA",
+				"-std=gnu++14",
+				"-march=native",
+				// "-ggdb",
+				"-O1",
+				"-Wall",
+				"-Wextra",
+				"-pedantic",
+				"-Wcast-align",
+				"-Wconversion",
+				"-Wpointer-arith",
+				"-Werror=shadow",
+				"-Werror=return-type",
+				"-shared-libstdc++",
+				"-shared-libgcc",
+				"-o",
+				"ThreadPool.exe",
+				"ThreadPool\\fwd.cpp",
+				"ThreadPool\\parallel.cpp",
+				"ThreadPool\\main.cpp",
+				"-lntdll"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"echo": true,
+				"reveal": "silent",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": "$gcc"
+		},
+		{
+			"label": "linux.x64",
+			"type": "process",
+			"command": "/usr/bin/x86_64-linux-gnu-g++",
+			"args": [
+				"-std=gnu++14",
+				"-march=native",
+				"-ggdb",
+				"-O1",
+				"-Wall",
+				"-Wextra",
+				"-pedantic",
+				"-Wcast-align",
+				"-Wconversion",
+				"-Wpointer-arith",
+				"-Werror=shadow",
+				"-Werror=return-type",
+				"-fsanitize=undefined",
+				"-fsanitize=address",
+				"-fsanitize=leak",
+				"-o",
+				"ThreadPool.out",
+				"ThreadPool/fwd.cpp",
+				"ThreadPool/parallel.cpp",
+				"ThreadPool/main.cpp",
+				"-pthread"
+			],
+			"group": "build",
+			"presentation": {
+				"echo": true,
+				"reveal": "silent",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": "$gcc"
+		},
+		{
+			"label": "linux.aarch64",
+			"type": "process",
+			"command": "/usr/bin/aarch64-linux-gnu-g++",
+			"args": [
+				"-std=gnu++14",
+				"-march=native",
+				"-ggdb",
+				"-O1",
+				"-Wall",
+				"-Wextra",
+				"-pedantic",
+				"-Wcast-align",
+				"-Wconversion",
+				"-Wpointer-arith",
+				"-Werror=shadow",
+				"-Werror=return-type",
+				"-fsanitize=undefined",
+				"-fsanitize=address",
+				"-fsanitize=leak",
+				"-o",
+				"ThreadPool.out",
+				"ThreadPool/fwd.cpp",
+				"ThreadPool/parallel.cpp",
+				"ThreadPool/main.cpp",
+				"-pthread"
+			],
+			"group": "build",
+			"presentation": {
+				"echo": true,
+				"reveal": "silent",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": "$gcc"
+		}
+	]
+}

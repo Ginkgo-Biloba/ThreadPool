@@ -21,6 +21,10 @@
 bld/
 [Bb]in/
 [Oo]bj/
+x86_[Dd]ebug/
+x86_[Rr]elease/
+x64_[Dd]ebug/
+x64_[Rr]elease/
 
 # Visual Studio 2015 cache/options directory
 .vs/
@@ -240,3 +244,8 @@ ModelManifest.xml
 
 # FAKE - F# Make
 .fake/
+
+# 生成文件
+*.ppm
+*.exe
+*.out
