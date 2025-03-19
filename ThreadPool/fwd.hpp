@@ -10,8 +10,8 @@
 #	define GK_FUNC          __PRETTY_FUNCTION__
 #	define GK_TRAP          __builtin_trap()
 #	define GK_UNREACHABLE   __builtin_unreachable()
-#	define GK_INLINE        extern __inline__ __attribute__((__gnu_inline__))
-#	define GK_ALWAYS_INLINE extern __inline__ __attribute__((__always_inline__, __artificial__))
+#	define GK_INLINE        extern __inline__ __attribute__((__artificial__))
+#	define GK_ALWAYS_INLINE extern __inline__ __attribute__((__artificial__, __always_inline__))
 #	define GK_NO_INLINE     __attribute__((__noinline__))
 #	define GK_NO_RETURN     __attribute__((__noreturn__))
 #	define GK_ALIGNED(x)    __attribute__((__aligned__(x)))
@@ -201,15 +201,15 @@ GK_NO_RETURN void logError(char const* file, char const* func, int line,
 
 }
 
-#define GK_LOG_INFO(...)                         \
-	do {                                           \
-		char _buf[1024];                             \
-		snprintf(_buf, sizeof(_buf), ##__VA_ARGS__); \
-		fputs(_buf, stdout);                         \
+#define GK_LOG_INFO(...)                       \
+	do {                                         \
+		char _buf[1024];                           \
+		snprintf(_buf, sizeof(_buf), __VA_ARGS__); \
+		fputs(_buf, stdout);                       \
 	} while (0)
 
 #define GK_LOG_ERROR(...) \
-	gk::logError(__FILE__, GK_FUNC, __LINE__, ##__VA_ARGS__)
+	gk::logError(__FILE__, GK_FUNC, __LINE__, __VA_ARGS__)
 
 #define GK_ASSERT(expr)                       \
 	do {                                        \

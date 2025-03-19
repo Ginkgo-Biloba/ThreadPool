@@ -52,6 +52,8 @@ artifacts/
 *_p.c
 *_i.h
 *.ilk
+*.exp
+*.lib
 *.meta
 *.obj
 *.pch
@@ -248,4 +250,3 @@ ModelManifest.xml
 # 生成文件
 *.ppm
 *.exe
-*.out
