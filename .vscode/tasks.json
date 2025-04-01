@@ -1,124 +1,37 @@
 {
-	// Consultez https://go.microsoft.com/fwlink/?LinkId=733558 
-	// pour voir la documentation sur le format de tasks.json
+	// See https://go.microsoft.com/fwlink/?LinkId=733558
+	// for the documentation about the tasks.json format
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "mingw64",
-			"type": "process",
-			"command": "${env:mingw}\\bin\\g++.exe",
-			"args": [
-				"-D_WIN32_WINNT=_WIN32_WINNT_VISTA",
-				"-std=gnu++14",
-				"-march=native",
-				// "-ggdb",
-				"-O1",
-				"-Wall",
-				"-Wextra",
-				"-pedantic",
-				"-Wcast-align",
-				"-Wconversion",
-				"-Wpointer-arith",
-				"-Werror=shadow",
-				"-Werror=return-type",
-				"-shared-libstdc++",
-				"-shared-libgcc",
-				"-o",
-				"ThreadPool.exe",
-				"ThreadPool\\fwd.cpp",
-				"ThreadPool\\parallel.cpp",
-				"ThreadPool\\main.cpp",
-				"-lntdll"
+			"label": "cbuild",
+			"type": "shell",
+			"windows": {
+				"command": "clang++.exe -masm=intel -mavx2 -O0 -g -Wall -Wextra -pedantic -Werror -Wcast-align -Wconversion -Wpointer-arith -Wshadow -Wreturn-type -Wno-sign-conversion -fsanitize=undefined -fsanitize=address -o main.exe ThreadPool\\*.cpp -lntdll"
+			},
+			"linux": {
+				"command": "g++ -masm=intel -mavx2 -O0 -g -Wall -Wextra -pedantic -Werror -Wcast-align -Wconversion -Wpointer-arith -Wshadow -Wreturn-type -Wno-sign-conversion -fsanitize=undefined -fsanitize=address -o main.exe ThreadPool/*.cpp",
+			},
+			"group": "build",
+			"presentation": {
+				"reveal": "silent",
+			},
+			"problemMatcher": []
+		},
+		{
+			"type": "shell",
+			"label": "msvc",
+			"command": "cl.exe /nologo /arch:AVX2 -D_CRT_SECURE_NO_WARNINGS /EHsc /W4 /WX /Z7 /MDd /fsanitize=address /FC /FdR:\\ /FoR:\\ /FeR:\\main.exe ThreadPool\\*.cpp ntdll.lib",
+			"problemMatcher": [
+				"$msCompile"
 			],
+			"presentation": {
+				"reveal": "silent",
+			},
 			"group": {
 				"kind": "build",
 				"isDefault": true
-			},
-			"presentation": {
-				"echo": true,
-				"reveal": "silent",
-				"focus": false,
-				"panel": "shared",
-				"showReuseMessage": true,
-				"clear": false
-			},
-			"problemMatcher": "$gcc"
-		},
-		{
-			"label": "linux.x64",
-			"type": "process",
-			"command": "/usr/bin/x86_64-linux-gnu-g++",
-			"args": [
-				"-std=gnu++14",
-				"-march=native",
-				"-ggdb",
-				"-O1",
-				"-Wall",
-				"-Wextra",
-				"-pedantic",
-				"-Wcast-align",
-				"-Wconversion",
-				"-Wpointer-arith",
-				"-Werror=shadow",
-				"-Werror=return-type",
-				"-fsanitize=undefined",
-				"-fsanitize=address",
-				"-fsanitize=leak",
-				"-o",
-				"ThreadPool.out",
-				"ThreadPool/fwd.cpp",
-				"ThreadPool/parallel.cpp",
-				"ThreadPool/main.cpp",
-				"-pthread"
-			],
-			"group": "build",
-			"presentation": {
-				"echo": true,
-				"reveal": "silent",
-				"focus": false,
-				"panel": "shared",
-				"showReuseMessage": true,
-				"clear": false
-			},
-			"problemMatcher": "$gcc"
-		},
-		{
-			"label": "linux.aarch64",
-			"type": "process",
-			"command": "/usr/bin/aarch64-linux-gnu-g++",
-			"args": [
-				"-std=gnu++14",
-				"-march=native",
-				"-ggdb",
-				"-O1",
-				"-Wall",
-				"-Wextra",
-				"-pedantic",
-				"-Wcast-align",
-				"-Wconversion",
-				"-Wpointer-arith",
-				"-Werror=shadow",
-				"-Werror=return-type",
-				"-fsanitize=undefined",
-				"-fsanitize=address",
-				"-fsanitize=leak",
-				"-o",
-				"ThreadPool.out",
-				"ThreadPool/fwd.cpp",
-				"ThreadPool/parallel.cpp",
-				"ThreadPool/main.cpp",
-				"-pthread"
-			],
-			"group": "build",
-			"presentation": {
-				"echo": true,
-				"reveal": "silent",
-				"focus": false,
-				"panel": "shared",
-				"showReuseMessage": true,
-				"clear": false
-			},
-			"problemMatcher": "$gcc"
+			}
 		}
 	]
 }

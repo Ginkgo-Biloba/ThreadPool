@@ -1,28 +1,9 @@
 {
 	"configurations": [
 		{
-			"name": "mingw.x64",
-			"defines": [
-				"_WIN32_WINNT=_WIN32_WINNT_VISTA"
-			],
-			"compilerPath": "${env:mingw}\\bin\\x86_64-w64-mingw32-g++.exe",
-			"cStandard": "c11",
-			"cppStandard": "gnu++14",
-			"intelliSenseMode": "windows-gcc-x64"
-		},
-		{
-			"name": "linux.x64",
-			"compilerPath": "/usr/bin/x86_64-linux-gnu-g++",
-			"cStandard": "c11",
-			"cppStandard": "gnu++14",
-			"intelliSenseMode": "linux-gcc-x64"
-		},
-		{
-			"name": "linux.aarch64",
-			"compilerPath": "/usr/bin/aarch64-linux-gnu-g++",
-			"cStandard": "c11",
-			"cppStandard": "gnu++14",
-			"intelliSenseMode": "linux-gcc-x64"
+			"name": "msvc",
+			"compilerPath": "cl.exe",
+			"intelliSenseMode": "windows-msvc-x64"
 		}
 	],
 	"version": 4

@@ -2,7 +2,6 @@
 #include <cmath>
 #include "parallel.hpp"
 using namespace gk;
-using std::vector;
 
 static int sCount = 0;
 
@@ -64,7 +63,7 @@ static void draw_mandelbrot(Mat& m,
 
 static void writePGM(Mat const& img, int frame)
 {
-	return;
+	if (frame) return;
 	char name[128];
 	snprintf(name, sizeof(name), "pool%02d.ppm", frame);
 	FILE* fid = fopen(name, "wb");

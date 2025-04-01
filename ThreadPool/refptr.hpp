@@ -9,7 +9,7 @@ struct RefObj {
 
 	RefObj() { refcount = 0; }
 
-	// You can override this function to do something interesting
+	// You can override this function
 	virtual void destory() { delete this; }
 
 protected:

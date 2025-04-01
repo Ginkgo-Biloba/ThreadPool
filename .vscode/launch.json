@@ -1,24 +1,29 @@
 {
-	// Utilisez IntelliSense pour en savoir plus sur les attributs possibles.
-	// Pointez pour afficher la description des attributs existants.
-	// Pour plus d'informations, visitez : https://go.microsoft.com/fwlink/?linkid=830387
+	// 使用 IntelliSense 了解相关属性。 
+	// 悬停以查看现有属性的描述。
+	// 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
 	"version": "0.2.0",
 	"configurations": [
 		{
-			"name": "(gdb) mingw64",
+			"name": "lldb-dap",
+			"type": "lldb-dap",
+			"request": "launch",
+			"program": "${workspaceFolder}/main.exe",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			// "runInTerminal": true,
+			"preLaunchTask": "cbuild"
+		},
+		{
+			"name": "cppgdb",
 			"type": "cppdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/ThreadPool.exe",
+			"program": "${workspaceFolder}/main.exe",
 			"args": [],
 			"stopAtEntry": false,
-			"cwd": "${workspaceFolder}",
-			"environment": [
-				{ "name": "Path", "value": "${env:mingw}\\bin"}
-			],
 			"externalConsole": false,
-			"internalConsoleOptions": "openOnSessionStart",
+			"cwd": "${workspaceFolder}",
 			"MIMode": "gdb",
-			"miDebuggerPath": "${env:mingw}\\bin\\gdb64.exe",
 			"miDebuggerArgs": "--silent",
 			"setupCommands": [
 				{
@@ -27,30 +32,19 @@
 					"ignoreFailures": false
 				}
 			],
-			"preLaunchTask": "mingw64"
+			"preLaunchTask": "cbuild"
 		},
 		{
-			"name": "(gdb) linux",
-			"type": "cppdbg",
+			"name": "cppvsdbg",
+			"type": "cppvsdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/ThreadPool.out",
+			"program": "R:\\main.exe",
 			"args": [],
 			"stopAtEntry": false,
 			"cwd": "${workspaceFolder}",
 			"environment": [],
-			"externalConsole": false,
-			"internalConsoleOptions": "openOnSessionStart",
-			"MIMode": "gdb",
-			"miDebuggerPath": "/usr/bin/gdb",
-			"miDebuggerArgs": "--silent",
-			"setupCommands": [
-				{
-					"description": "Enable pretty-printing for gdb",
-					"text": "-enable-pretty-printing",
-					"ignoreFailures": false
-				}
-			],
-			"preLaunchTask": "linux.x64"
+			"console": "integratedTerminal",
+			"preLaunchTask": "msvc"
 		},
 	]
 }

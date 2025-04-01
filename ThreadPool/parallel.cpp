@@ -51,7 +51,7 @@ AsyncPool::AsyncPool()
 	: num_thread(0), current_id(0)
 {
 	for (size_t i = sizeof(workers) / sizeof(workers[0]); i--;) {
-		workers[i].index = 0;
+		workers[i].index = static_cast<uint32_t>(i);
 		workers[i].stop = 0;
 		workers[i].pool = this;
 		workers[i].thread = 0;
@@ -210,7 +210,7 @@ SyncPool::SyncPool()
 	: num_worker(0)
 {
 	for (size_t i = sizeof(workers) / sizeof(workers[0]); i--;) {
-		workers[i].index = 0;
+		workers[i].index = static_cast<uint32_t>(i);
 		workers[i].stop = 0;
 		workers[i].pool = this;
 		workers[i].thread = 0;

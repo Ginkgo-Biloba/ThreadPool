@@ -1,12 +1,10 @@
 CompileFlags:
-  Compiler: C:\appdata\TDM-GCC-5.1.0\bin\x86_64-w64-mingw32-g++.exe
+  # Compiler: clang++.exe
   Add:
-    - -D_WIN32_WINNT=_WIN32_WINNT_VISTA
-    - -std=gnu++14
     - -masm=intel
     - -march=native
     - -O0
-    - -ggdb
+    - -g
     - -Wall
     - -Wextra
     - -pedantic
@@ -17,9 +15,6 @@ CompileFlags:
     - -Wpointer-arith
     - -Wshadow
     - -Wreturn-type
-    - -IC:\appdata\TDM-GCC-5.1.0\lib\gcc\x86_64-w64-mingw32\5.1.0\include
-    - -IC:\appdata\TDM-GCC-5.1.0\lib\gcc\x86_64-w64-mingw32\5.1.0\include\c++
-    - -IC:\appdata\TDM-GCC-5.1.0\lib\gcc\x86_64-w64-mingw32\5.1.0\include\c++\x86_64-w64-mingw32
 
 Index:
   Background: Skip
